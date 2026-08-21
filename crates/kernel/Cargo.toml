@@ -1,0 +1,23 @@
+[package]
+name = "kernel"
+description = "State machine that owns an object graph and a set of long-running tasks, and guarantees the order in which they are born, run and die."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["signals"]
+signals = ["tokio/signal"]
+
+[dependencies]
+kernel-core = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
+
+[lints]
+workspace = true

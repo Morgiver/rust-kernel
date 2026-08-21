@@ -572,6 +572,15 @@ pub enum ResolveError {
         /// The contract the manifest declares.
         declared: ContractRef,
     },
+    /// The bundle ordering constraints contain a cycle.
+    ///
+    /// Distinct from [`ResolveError::Cycle`], which walks contracts: a bundle
+    /// is named by a string, not by a type, so it cannot be a [`ContractRef`].
+    BundleCycle {
+        /// The full cycle, with the first bundle repeated at the end, so the
+        /// rendering reads as a closed walk.
+        path: Vec<&'static str>,
+    },
     /// A bundle asks to be ordered after a bundle that is not registered.
     UnknownBundleOrder {
         /// The bundle stating the constraint.
@@ -621,6 +630,16 @@ impl fmt::Display for ResolveError {
                 }
                 Ok(())
             }
+            Self::BundleCycle { path } => {
+                f.write_str("bundle ordering cycle: ")?;
+                for (position, bundle) in path.iter().enumerate() {
+                    if position > 0 {
+                        f.write_str(" -> ")?;
+                    }
+                    f.write_str(bundle)?;
+                }
+                Ok(())
+            }
             Self::UndeclaredExtensionPoint {
                 extension,
                 contributed_by,
@@ -642,6 +661,84 @@ impl fmt::Display for ResolveError {
 }
 
 impl std::error::Error for ResolveError {}
+
+// --------------------------------------------------------------------------
+// Container access
+// --------------------------------------------------------------------------
+
+/// A resolution asked of the container at run time failed.
+///
+/// Distinct from [`ResolveError`] on purpose: that one describes the graph and
+/// can only be produced before anything is built, this one describes a single
+/// access and can only be produced once the graph is closed. Keeping them apart
+/// stops a phase-three aggregate from carrying variants phase three cannot
+/// reach.
+#[derive(Debug)]
+pub enum ContainerError {
+    /// Nothing provides the requested contract.
+    ///
+    /// Phase three makes this unreachable for anything the graph declared, so
+    /// in practice it means the caller asked for a contract it never declared
+    /// in its `requires`.
+    NotProvided {
+        /// The contract that was asked for.
+        contract: ContractRef,
+    },
+    /// The stored value is not of the requested type.
+    ///
+    /// Reaching this is a defect in the erasure layer, not a user error.
+    TypeMismatch {
+        /// The contract that was asked for.
+        contract: ContractRef,
+    },
+    /// A shared value was asked to be built for the first time after boot.
+    ///
+    /// Lazy resolution is forbidden once the kernel is running: an error that
+    /// would surface on the first unit of work is a design defect, not an
+    /// operational one.
+    Sealed {
+        /// The contract whose first instantiation was refused.
+        contract: ContractRef,
+    },
+    /// The provider ran and failed.
+    Build(BuildError),
+}
+
+impl fmt::Display for ContainerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotProvided { contract } => {
+                write!(f, "no provider for ")?;
+                write_contract(f, contract)
+            }
+            Self::TypeMismatch { contract } => {
+                write!(f, "stored value has the wrong type for ")?;
+                write_contract(f, contract)
+            }
+            Self::Sealed { contract } => {
+                write!(f, "refusing to build ")?;
+                write_contract(f, contract)?;
+                f.write_str(" after boot: lazy resolution is forbidden")
+            }
+            Self::Build(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for ContainerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Build(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<BuildError> for ContainerError {
+    fn from(error: BuildError) -> Self {
+        Self::Build(error)
+    }
+}
 
 // --------------------------------------------------------------------------
 // Aggregate
@@ -876,6 +973,17 @@ mod tests {
         assert!(path[1].ends_with("::B"));
         assert!(path[2].ends_with("::C"));
         assert_eq!(path[0], path[3]);
+    }
+
+    #[test]
+    fn bundle_cycle_display() {
+        let error = ResolveError::BundleCycle {
+            path: vec!["alpha", "beta", "alpha"],
+        };
+        assert_eq!(
+            error.to_string(),
+            "bundle ordering cycle: alpha -> beta -> alpha"
+        );
     }
 
     #[test]
