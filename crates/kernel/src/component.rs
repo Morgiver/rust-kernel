@@ -78,8 +78,12 @@ use crate::shutdown::{KernelHandle, Shutdown};
 /// }
 ///
 /// impl Component for Holder {
+///     fn name() -> &'static str {
+///         "holder"
+///     }
+///
 ///     fn descriptor(&self) -> ComponentDescriptor {
-///         ComponentDescriptor::new("holder")
+///         ComponentDescriptor::new()
 ///     }
 ///
 ///     fn boot<'a>(&'a self, _cx: &'a BootContext<'a>)
@@ -93,14 +97,26 @@ use crate::shutdown::{KernelHandle, Shutdown};
 /// }
 ///
 /// let held: Arc<dyn Component> = Arc::new(Holder { ready: AtomicBool::new(false) });
-/// assert_eq!(held.descriptor().name, "holder");
+/// assert_eq!(Holder::name(), "holder");
+/// assert_eq!(held.descriptor().boot_timeout, None);
 /// ```
 pub trait Component: Send + Sync + 'static {
-    /// Identity and time bounds of this component.
+    /// The one declared name of this component.
+    ///
+    /// Read once, at registration, where the concrete type is still known: it
+    /// becomes the [`ComponentId`](kernel_core::ComponentId) the plan indexes
+    /// and every diagnostic blames. There is no second place to declare it.
+    ///
+    /// It is `where Self: Sized` — never dispatched through
+    /// `dyn Component` — which is what keeps the trait dyn-compatible.
+    fn name() -> &'static str
+    where
+        Self: Sized;
+
+    /// Time bounds of this component.
     ///
     /// Read by the kernel on every lifecycle transition, so it must be cheap
-    /// and must not change between calls: the name is the identity the plan and
-    /// every diagnostic are written against.
+    /// and must not change between calls.
     fn descriptor(&self) -> ComponentDescriptor;
 
     /// Prepare this component for use.
@@ -328,8 +344,12 @@ mod tests {
     }
 
     impl Component for Holder {
+        fn name() -> &'static str {
+            "holder"
+        }
+
         fn descriptor(&self) -> ComponentDescriptor {
-            ComponentDescriptor::new("holder")
+            ComponentDescriptor::new()
         }
 
         fn boot<'a>(
@@ -358,8 +378,12 @@ mod tests {
     struct Bare;
 
     impl Component for Bare {
+        fn name() -> &'static str {
+            "bare"
+        }
+
         fn descriptor(&self) -> ComponentDescriptor {
-            ComponentDescriptor::new("bare")
+            ComponentDescriptor::new()
         }
 
         fn boot<'a>(
@@ -502,7 +526,8 @@ mod tests {
 
         let cx = BootContext::new(&container, &dispatcher, &extensions);
 
-        assert_eq!(unit.descriptor().name, "holder");
+        assert_eq!(Holder::name(), "holder");
+        assert_eq!(unit.descriptor(), ComponentDescriptor::new());
         assert!(unit.boot(&cx).await.is_ok());
     }
 

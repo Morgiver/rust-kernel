@@ -374,6 +374,11 @@ trait :
 
 ```rust
 pub trait Component: Send + Sync + 'static {
+    /// The one declared name, read at registration where `Self` is concrete.
+    fn name() -> &'static str
+    where
+        Self: Sized;
+
     fn descriptor(&self) -> ComponentDescriptor;
 
     fn boot<'a>(&'a self, cx: &'a BootContext<'a>) -> BoxFuture<'a, Result<(), ComponentError>>;
@@ -385,7 +390,6 @@ pub trait Component: Send + Sync + 'static {
 }
 
 pub struct ComponentDescriptor {
-    pub name: &'static str,
     pub boot_timeout: Option<Duration>,
     pub shutdown_timeout: Option<Duration>,
 }
@@ -411,12 +415,16 @@ termine immédiatement.
 
 ```rust
 pub trait Runnable: Send + Sync + 'static {
+    /// The one declared name, read at registration where `Self` is concrete.
+    fn name() -> &'static str
+    where
+        Self: Sized;
+
     fn descriptor(&self) -> RunnableDescriptor;
     fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>>;
 }
 
 pub struct RunnableDescriptor {
-    pub name: &'static str,
     pub criticality: Criticality,
     pub restart: RestartPolicy,
 }

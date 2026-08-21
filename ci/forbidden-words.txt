@@ -1,0 +1,177 @@
+# Vocabulary guard — word list.
+#
+# Design section 16, altitude rule: no type of the kernel names a domain
+# entity, a transport or a technology. `ci/check_vocabulary.py` turns that
+# sentence into a build failure over `crates/**/*.rs` and `crates/**/Cargo.toml`.
+#
+# Two sections, because the two kinds of word need different reach:
+#
+#   [anywhere]     matched over the whole file, comments and string literals
+#                  included. Only names a generic kernel never needs to write,
+#                  not even to say it does not do them.
+#   [identifiers]  matched over code only — comments, string literals and
+#                  character literals are blanked out first. For words ordinary
+#                  prose uses freely ("it opens no socket", "the arithmetic
+#                  product") but which must never name a type, a field, a
+#                  function, a module or a feature.
+#
+# Matching is case insensitive and token bounded, a case change counting as a
+# boundary: `http` catches `HttpThing`, `http_thing` and `myHttpThing`, and does
+# not catch `https` or `restart`. A plural needs its own entry.
+#
+# The list is meant to grow. When an application uses this kernel, its own
+# domain glossary belongs in the [identifiers] section: that is the guard the
+# design asks for ("grep en CI sur un glossaire de domaine du projet").
+# Entries are one alphanumeric token per line; `#` starts a comment.
+#
+# Deliberately absent, because the kernel's own lifecycle vocabulary owns them:
+# `order` (boot order), `rollback` (boot rollback), `controller`
+# (`ShutdownController`), `payload` (event payload), `transaction`. Adding one
+# of them would flag the kernel's own mechanism, not a domain leak.
+
+[anywhere]
+
+# Transports and wire protocols
+http
+https
+grpc
+graphql
+websocket
+webhook
+tcp
+udp
+quic
+mqtt
+amqp
+ftp
+ssh
+smtp
+imap
+dns
+tls
+ssl
+
+# Data stores
+sql
+postgres
+postgresql
+mysql
+mariadb
+sqlite
+mssql
+redis
+memcached
+mongodb
+cassandra
+elasticsearch
+clickhouse
+dynamodb
+
+# Message brokers
+kafka
+rabbitmq
+nats
+pulsar
+zeromq
+
+# Hosting and orchestration
+aws
+gcp
+azure
+cloudflare
+heroku
+docker
+kubernetes
+systemd
+nginx
+haproxy
+envoy
+
+# Serialisation formats and libraries
+serde
+json
+yaml
+xml
+csv
+protobuf
+msgpack
+cbor
+bson
+
+# Observability products
+prometheus
+opentelemetry
+grafana
+jaeger
+zipkin
+datadog
+sentry
+statsd
+syslog
+
+# Rust ecosystem crates a kernel must not name in its surface
+axum
+hyper
+tonic
+actix
+warp
+diesel
+sqlx
+reqwest
+clap
+structopt
+tracing
+log4rs
+slog
+
+# Identity and third-party services
+jwt
+oauth
+oidc
+saml
+ldap
+kerberos
+bcrypt
+argon2
+stripe
+twilio
+sendgrid
+
+[identifiers]
+
+# Transport vocabulary: legitimate in prose that disclaims it, never in a name
+socket
+endpoint
+port
+url
+uri
+hostname
+header
+packet
+route
+router
+middleware
+cookie
+session
+
+# Persistence vocabulary
+column
+migration
+
+# Domain entities — the starter set. An application extends this section with
+# its own glossary; nothing here is business of the kernel.
+customer
+invoice
+payment
+product
+tenant
+subscription
+cart
+shipment
+employee
+account
+user
+login
+billing
+inventory
+catalog

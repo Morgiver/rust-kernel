@@ -67,7 +67,8 @@ pub(crate) type UnitBuild<D> =
 /// unit the kernel drives and the value a contract resolves to are the same
 /// object.
 pub(crate) struct UnitEntry<D> {
-    /// The unit's type name, which is all that is known before it is built.
+    /// The name the unit declares on its own trait, read at registration and
+    /// carried unchanged into the id every diagnostic blames.
     pub name: &'static str,
     /// The bundle that registered it.
     pub bundle: &'static str,
@@ -311,7 +312,7 @@ impl Registry {
     /// [`runnable`](Self::runnable): boot has a deadline.
     pub fn component<T: Component>(&mut self, provider: Provider<T>) -> Binding<'_, T> {
         let order = self.next_rank();
-        let provider = self.force_shared(provider);
+        let provider = self.force_shared(T::name(), provider);
         self.push_binding(
             ContractId::of::<T>(),
             ContractRef::of::<T>(),
@@ -319,7 +320,7 @@ impl Registry {
             order,
         );
         self.components.push(UnitEntry {
-            name: core::any::type_name::<T>(),
+            name: T::name(),
             bundle: self.bundle,
             contract: ContractId::of::<T>(),
             order,
@@ -338,7 +339,7 @@ impl Registry {
     /// token fires.
     pub fn runnable<T: Runnable>(&mut self, provider: Provider<T>) -> Binding<'_, T> {
         let order = self.next_rank();
-        let provider = self.force_shared(provider);
+        let provider = self.force_shared(T::name(), provider);
         self.push_binding(
             ContractId::of::<T>(),
             ContractRef::of::<T>(),
@@ -346,7 +347,7 @@ impl Registry {
             order,
         );
         self.runnables.push(UnitEntry {
-            name: core::any::type_name::<T>(),
+            name: T::name(),
             bundle: self.bundle,
             contract: ContractId::of::<T>(),
             order,
@@ -521,11 +522,19 @@ impl Registry {
 
     /// Forces a lifecycle-managed unit's binding to [`Lifetime::Shared`],
     /// reporting the override rather than performing it silently.
-    fn force_shared<T: Send + Sync + 'static>(&self, provider: Provider<T>) -> Provider<T> {
+    ///
+    /// `name` is the unit's declared name — `Component::name` or
+    /// `Runnable::name` — because the record is about one unit, and a unit is
+    /// named by what it declares and never by its Rust type path.
+    fn force_shared<T: Send + Sync + 'static>(
+        &self,
+        name: &'static str,
+        provider: Provider<T>,
+    ) -> Provider<T> {
         if provider.lifetime != Lifetime::Shared {
             self.telemetry.record(
                 Record::new(Level::Warn, "registry.lifetime_overridden")
-                    .with("contract", core::any::type_name::<T>())
+                    .with("contract", name)
                     .with("requested", provider.lifetime.to_string()),
             );
         }
@@ -552,7 +561,10 @@ fn resolve_component<T: Component>(
     container: &Container,
 ) -> BoxFuture<'_, Result<Arc<dyn Component>, BuildError>> {
     Box::pin(async move {
-        let unit = container.get::<T>().await.map_err(failed::<T>)?;
+        let unit = container
+            .get::<T>()
+            .await
+            .map_err(|error| failed(T::name(), error))?;
         Ok(unit as Arc<dyn Component>)
     })
 }
@@ -562,14 +574,25 @@ fn resolve_runnable<T: Runnable>(
     container: &Container,
 ) -> BoxFuture<'_, Result<Arc<dyn Runnable>, BuildError>> {
     Box::pin(async move {
-        let unit = container.get::<T>().await.map_err(failed::<T>)?;
+        let unit = container
+            .get::<T>()
+            .await
+            .map_err(|error| failed(T::name(), error))?;
         Ok(unit as Arc<dyn Runnable>)
     })
 }
 
-/// Names the unit whose resolution failed.
-fn failed<T: ?Sized + 'static>(error: ContainerError) -> BuildError {
-    BuildError::new(core::any::type_name::<T>(), Box::new(error))
+/// Names the unit whose resolution failed, by its declared name.
+///
+/// `name` comes from `Component::name` or `Runnable::name`: both call sites
+/// still know the concrete type, so the one declared identity is in reach and
+/// the Rust type path is never the answer.
+///
+/// The [`ContainerError`] it wraps names the *contract* by its type, which is
+/// a different question with a different answer — see the note on
+/// [`ContainerError`].
+fn failed(name: &'static str, error: ContainerError) -> BuildError {
+    BuildError::new(name, Box::new(error))
 }
 
 /// Re-roots `error` under `prefix`, so a nested failure reports where it is.
@@ -624,8 +647,12 @@ mod tests {
     struct Unit;
 
     impl Component for Unit {
+        fn name() -> &'static str {
+            "unit"
+        }
+
         fn descriptor(&self) -> ComponentDescriptor {
-            ComponentDescriptor::new("unit")
+            ComponentDescriptor::new()
         }
 
         fn boot<'a>(
@@ -646,8 +673,12 @@ mod tests {
     struct Worker;
 
     impl Runnable for Worker {
+        fn name() -> &'static str {
+            "worker"
+        }
+
         fn descriptor(&self) -> RunnableDescriptor {
-            RunnableDescriptor::new("worker")
+            RunnableDescriptor::new()
         }
 
         fn run(self: Arc<Self>, _cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
@@ -866,13 +897,15 @@ mod tests {
 
         let parts = registry.into_parts();
         let build = Arc::clone(&parts.components[0].build);
+        // The entry carries the declared name, not the Rust type path.
+        assert_eq!(parts.components[0].name, Unit::name());
         let container = container(parts);
 
         let direct = container.get::<Unit>().await.expect("get");
         let erased = build(&container).await.expect("build");
 
         assert_eq!(built.load(Ordering::SeqCst), 1);
-        assert_eq!(erased.descriptor().name, direct.descriptor().name);
+        assert_eq!(erased.descriptor(), direct.descriptor());
     }
 
     #[tokio::test]
@@ -890,13 +923,15 @@ mod tests {
 
         let parts = registry.into_parts();
         let build = Arc::clone(&parts.runnables[0].build);
+        // The entry carries the declared name, not the Rust type path.
+        assert_eq!(parts.runnables[0].name, Worker::name());
         let container = container(parts);
 
         let direct = container.get::<Worker>().await.expect("get");
         let erased = build(&container).await.expect("build");
 
         assert_eq!(built.load(Ordering::SeqCst), 1);
-        assert_eq!(erased.descriptor().name, direct.descriptor().name);
+        assert_eq!(erased.descriptor(), direct.descriptor());
     }
 
     #[test]
@@ -939,7 +974,9 @@ mod tests {
         let Err(error) = build(&container).await else {
             panic!("resolution must fail");
         };
-        assert!(error.contract().contains("Unit"));
+        // The declared name, not the Rust type path.
+        assert_eq!(error.contract(), Unit::name());
+        assert!(!error.contract().contains("Unit"), "{error}");
     }
 
     // ------------------------------------------------------------------

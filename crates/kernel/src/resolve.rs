@@ -24,7 +24,7 @@
 //! # Aggregation, not first failure
 //!
 //! Every check collects. A start-up that reveals one error at a time, six times
-//! in a row, is a tooling defect, so all eight checks run over the whole
+//! in a row, is a tooling defect, so all nine checks run over the whole
 //! registry and the violations come back together in one
 //! [`Vec<ResolveError>`](ResolveError). The order is deterministic: checks run
 //! in a fixed sequence and each one walks its input in registration order.
@@ -133,8 +133,11 @@ pub struct Resolved {
 ///    not registered.
 /// 8. [`BundleCycle`] — a cycle among the bundle ordering constraints, which
 ///    no registration order can satisfy.
+/// 9. [`DuplicateBundle`] — one name registered by two bundles, which makes
+///    every ordering constraint and every attribution that names it ambiguous.
 ///
 /// [`BundleCycle`]: ResolveError::BundleCycle
+/// [`DuplicateBundle`]: ResolveError::DuplicateBundle
 /// [`MissingContract`]: ResolveError::MissingContract
 /// [`DuplicateDefault`]: ResolveError::DuplicateDefault
 /// [`DuplicateNamed`]: ResolveError::DuplicateNamed
@@ -182,6 +185,7 @@ pub fn resolve(
     manifest_mismatches(&parts.bindings, manifests, &mut errors);
     unknown_bundle_order(manifests, &mut errors);
     bundle_cycles(manifests, &mut errors);
+    duplicate_bundles(manifests, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -441,7 +445,7 @@ fn binding_cycles(bindings: &[BindingEntry], edges: &[Vec<usize>], errors: &mut 
 ///
 /// One report per contributing bundle and point: ten items posted to the same
 /// typo are one mistake, and ten identical lines would only bury the other
-/// seven checks.
+/// eight checks.
 fn undeclared_points(parts: &RegistryParts, errors: &mut Vec<ResolveError>) {
     let declared: HashSet<TypeId> = parts
         .declared_points
@@ -569,6 +573,33 @@ fn bundle_positions(manifests: &[BundleManifest]) -> HashMap<&'static str, usize
         positions.entry(manifest.name).or_insert(position);
     }
     positions
+}
+
+// --------------------------------------------------------------------------
+// 9. Duplicate bundle names
+// --------------------------------------------------------------------------
+
+/// Every name registered by more than one bundle.
+///
+/// A bundle name is what an `after` constraint targets and what every other
+/// phase-three report blames. Two bundles under one name therefore make the
+/// ordering ambiguous — the first registration silently wins every lookup —
+/// and send every diagnostic to whichever of them the reader guesses.
+///
+/// One report per contested name: the error carries the name alone, so a second
+/// identical line would say nothing the first did not and would only bury the
+/// other eight checks.
+fn duplicate_bundles(manifests: &[BundleManifest], errors: &mut Vec<ResolveError>) {
+    let mut seen: HashSet<&'static str> = HashSet::with_capacity(manifests.len());
+    let mut reported: HashSet<&'static str> = HashSet::new();
+
+    for manifest in manifests {
+        if !seen.insert(manifest.name) && reported.insert(manifest.name) {
+            errors.push(ResolveError::DuplicateBundle {
+                name: manifest.name,
+            });
+        }
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -877,6 +908,7 @@ mod tests {
                 ResolveError::ManifestMismatch { .. } => "manifest",
                 ResolveError::UnknownBundleOrder { .. } => "order",
                 ResolveError::BundleCycle { .. } => "bundle-cycle",
+                ResolveError::DuplicateBundle { .. } => "duplicate-bundle",
             })
             .collect()
     }
@@ -890,8 +922,12 @@ mod tests {
             struct $name;
 
             impl Component for $name {
+                fn name() -> &'static str {
+                    $label
+                }
+
                 fn descriptor(&self) -> ComponentDescriptor {
-                    ComponentDescriptor::new($label)
+                    ComponentDescriptor::new()
                 }
 
                 fn boot<'a>(
@@ -918,8 +954,12 @@ mod tests {
     struct Task;
 
     impl Runnable for Task {
+        fn name() -> &'static str {
+            "task"
+        }
+
         fn descriptor(&self) -> RunnableDescriptor {
-            RunnableDescriptor::new("task")
+            RunnableDescriptor::new()
         }
 
         fn run(
@@ -973,7 +1013,7 @@ mod tests {
     // One instance of every check, planted at once. The whole point of phase
     // three is that a start-up reveals all of them in one run.
     #[test]
-    fn aggregates_all_eight() {
+    fn aggregates_all_nine() {
         static ONE_REQUIRES: [ContractRef; 1] = [ContractRef::of::<dyn Beta>()];
         static AFTER_TWO: [&str; 1] = ["two"];
         static AFTER_ONE: [&str; 2] = ["one", "absent"];
@@ -981,6 +1021,7 @@ mod tests {
             .requires(&ONE_REQUIRES)
             .after(&AFTER_TWO);
         static TWO: BundleManifest = BundleManifest::new("two", "0.1.0").after(&AFTER_ONE);
+        static ONE_AGAIN: BundleManifest = BundleManifest::new("one", "0.1.0");
 
         let mut registry = registry();
         registry.enter_bundle("one");
@@ -1001,8 +1042,10 @@ mod tests {
         // 6. `one` declares a requirement none of its providers states.
         // 7. `two` orders itself after a bundle that is not registered.
         // 8. `one` and `two` order each other.
+        // 9. a third manifest registers the name `one` a second time.
 
-        let errors = resolve(registry, &[ONE, TWO]).expect_err("eight violations were planted");
+        let errors =
+            resolve(registry, &[ONE, TWO, ONE_AGAIN]).expect_err("nine violations were planted");
 
         assert_eq!(
             kinds(&errors),
@@ -1015,6 +1058,7 @@ mod tests {
                 "manifest",
                 "order",
                 "bundle-cycle",
+                "duplicate-bundle",
             ],
             "{:?}",
             rendered(&errors)
@@ -1389,6 +1433,47 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // 9. Duplicate bundle names
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn duplicate_bundle_reported() {
+        static ONE: BundleManifest = BundleManifest::new("one", "0.1.0");
+        static AGAIN: BundleManifest = BundleManifest::new("one", "0.2.0");
+        static TWO: BundleManifest = BundleManifest::new("two", "0.1.0");
+
+        let errors =
+            resolve(registry(), &[ONE, TWO, AGAIN]).expect_err("`one` is registered twice");
+
+        match &errors[..] {
+            [ResolveError::DuplicateBundle { name }] => assert_eq!(*name, "one"),
+            other => panic!("expected one duplicate bundle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn three_bundles_report_once() {
+        static ONE: BundleManifest = BundleManifest::new("one", "0.1.0");
+
+        let errors = resolve(registry(), &[ONE, ONE, ONE]).expect_err("one name, three bundles");
+
+        assert_eq!(kinds(&errors), ["duplicate-bundle"]);
+    }
+
+    // The name an `after` constraint targets is the one the check contests, so
+    // a graph that orders itself against a duplicated name reports both.
+    #[test]
+    fn duplicate_keeps_ordering() {
+        static AFTER_ONE: [&str; 1] = ["one"];
+        static ONE: BundleManifest = BundleManifest::new("one", "0.1.0");
+        static TWO: BundleManifest = BundleManifest::new("two", "0.1.0").after(&AFTER_ONE);
+
+        let errors = resolve(registry(), &[ONE, TWO, ONE]).expect_err("`one` is registered twice");
+
+        assert_eq!(kinds(&errors), ["duplicate-bundle"]);
+    }
+
+    // ------------------------------------------------------------------
     // The plan
     // ------------------------------------------------------------------
 
@@ -1423,15 +1508,15 @@ mod tests {
             .collect();
         let first = names
             .iter()
-            .position(|name| name.ends_with("First"))
+            .position(|name| *name == "first")
             .expect("First is in the plan");
         let second = names
             .iter()
-            .position(|name| name.ends_with("Second"))
+            .position(|name| *name == "second")
             .expect("Second is in the plan");
         let third = names
             .iter()
-            .position(|name| name.ends_with("Third"))
+            .position(|name| *name == "third")
             .expect("Third is in the plan");
 
         assert!(first < second, "{names:?}");

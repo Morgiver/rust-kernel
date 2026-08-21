@@ -588,6 +588,15 @@ pub enum ResolveError {
         /// The unknown bundle it names.
         after: &'static str,
     },
+    /// Two bundles registered under one name.
+    ///
+    /// The name is what an ordering constraint targets and what every other
+    /// variant here blames, so sharing one makes the ordering ambiguous and the
+    /// attribution wrong.
+    DuplicateBundle {
+        /// The contested name.
+        name: &'static str,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -656,6 +665,9 @@ impl fmt::Display for ResolveError {
                 f,
                 "bundle `{bundle}` must come after unknown bundle `{after}`"
             ),
+            Self::DuplicateBundle { name } => {
+                write!(f, "duplicate bundle `{name}`: registered more than once")
+            }
         }
     }
 }
@@ -673,6 +685,27 @@ impl std::error::Error for ResolveError {}
 /// access and can only be produced once the graph is closed. Keeping them apart
 /// stops a phase-three aggregate from carrying variants phase three cannot
 /// reach.
+///
+/// # Why this names a Rust type where a lifecycle diagnostic names a unit
+///
+/// Every variant here renders its contract through
+/// [`ContractRef::type_name`], so a diagnostic about a component prints a Rust
+/// type path — while the same component is blamed by a declared name in
+/// [`ComponentError`], in [`RunError`] and in every lifecycle record. That is
+/// deliberate, not an oversight: a unit has two identities and they answer two
+/// questions.
+///
+/// * A **declared name** — `Component::name` / `Runnable::name` — is what the
+///   kernel's lifecycle blames. It is chosen by the author, stable across
+///   refactors, and is the only identity a lifecycle diagnostic uses.
+/// * A **type identity** is what the container resolves by. A contract *is* a
+///   type: [`ContractRef`] is generic machinery that knows nothing of unit
+///   traits and so cannot reach a declared name, and printing anything else
+///   would name something other than the key the lookup actually failed on.
+///
+/// So a reader who sees a type path here is reading a container diagnostic,
+/// and one who sees a declared name is reading a lifecycle diagnostic. Neither
+/// is meant to be rewritten into the other.
 #[derive(Debug)]
 pub enum ContainerError {
     /// Nothing provides the requested contract.
@@ -998,6 +1031,15 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "bundle ordering cycle: alpha -> beta -> alpha"
+        );
+    }
+
+    #[test]
+    fn duplicate_bundle_display() {
+        let error = ResolveError::DuplicateBundle { name: "alpha" };
+        assert_eq!(
+            error.to_string(),
+            "duplicate bundle `alpha`: registered more than once"
         );
     }
 

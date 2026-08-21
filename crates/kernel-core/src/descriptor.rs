@@ -8,7 +8,9 @@
 //! The two families are:
 //!
 //! * **Descriptors** — [`BundleManifest`], [`ComponentDescriptor`],
-//!   [`RunnableDescriptor`]: the identity and the bounds of one unit.
+//!   [`RunnableDescriptor`]: the bounds and the policy of one unit. A
+//!   component or a runnable declares its name once, on its own trait, so a
+//!   descriptor carries none.
 //! * **Policies** — [`Lifetime`], [`Priority`], [`RestartPolicy`], [`Backoff`],
 //!   [`ShutdownPolicy`], plus the [`Stage`] ladder that shutdown walks.
 
@@ -213,36 +215,40 @@ impl fmt::Display for BundleManifest {
     }
 }
 
-/// Identity and time bounds of one component.
+/// Time bounds of one component.
 ///
-/// `None` on a timeout means "no bound of its own": the assembling layer falls
-/// back to whatever global policy it holds.
+/// It carries no name: a component declares its name once, on the trait it
+/// implements, and that declaration is read where the concrete type is still
+/// known. `None` on a timeout means "no bound of its own": the assembling layer
+/// falls back to whatever global policy it holds.
 ///
 /// ```
 /// use core::time::Duration;
 /// use kernel_core::ComponentDescriptor;
 ///
-/// static DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::new("sample")
-///     .boot_timeout(Duration::from_secs(5));
+/// static DESCRIPTOR: ComponentDescriptor =
+///     ComponentDescriptor::new().boot_timeout(Duration::from_secs(5));
 ///
 /// assert_eq!(DESCRIPTOR.shutdown_timeout, None);
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ComponentDescriptor {
-    /// Unique, stable name of the component.
-    pub name: &'static str,
     /// Upper bound on booting. Exceeding it is a boot failure.
     pub boot_timeout: Option<Duration>,
     /// Upper bound on shutting down. Exceeding it abandons the task and is
     /// recorded as an unclean stop.
+    ///
+    /// It shortens this component's own share of
+    /// [`ShutdownPolicy::stop`](field@ShutdownPolicy::stop) — which is a
+    /// per-unit budget, granted afresh when this component's shutdown begins —
+    /// and never extends it.
     pub shutdown_timeout: Option<Duration>,
 }
 
 impl ComponentDescriptor {
     /// A descriptor with no bound of its own.
-    pub const fn new(name: &'static str) -> Self {
+    pub const fn new() -> Self {
         ComponentDescriptor {
-            name,
             boot_timeout: None,
             shutdown_timeout: None,
         }
@@ -262,12 +268,6 @@ impl ComponentDescriptor {
             shutdown_timeout: Some(timeout),
             ..self
         }
-    }
-}
-
-impl fmt::Display for ComponentDescriptor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name)
     }
 }
 
@@ -446,6 +446,39 @@ impl Backoff {
 
 /// Global two-phase shutdown budget, overridable per unit by its descriptor.
 ///
+/// # The budgets are per unit, not per phase
+///
+/// `drain` and `stop` are what ONE unit is allowed, granted afresh when that
+/// unit's own shutdown begins. They are not a total for a phase to divide
+/// among its units.
+///
+/// * Runnables stop concurrently, so per-unit and per-phase coincide for them:
+///   their half of the shutdown costs `drain + stop` however many there are.
+/// * Components are stopped one after another, and each is given `stop` from
+///   the moment its own `shutdown` is called.
+///
+/// This is what makes the per-unit override mean something:
+/// [`ComponentDescriptor::shutdown_timeout`] is per unit and shortens this
+/// budget, which is only coherent if what it shortens is per unit too.
+///
+/// # What that costs
+///
+/// Worst case for a whole shutdown is `drain + stop + (stop × components)`,
+/// and it grows with the number of components. The total is NOT bounded by
+/// `drain + stop`, nor by [`total`](Self::total).
+///
+/// That cost buys one rule: a unit is never abandoned because another unit
+/// overran. A single deadline shared across the component walk would let a
+/// component that legitimately used two thirds of the budget leave its
+/// neighbour a third, and the neighbour would be reported failed for a wait
+/// that was not its own. A unit that wants a tighter bound declares one, and a
+/// declared bound only ever shortens.
+///
+/// [`total`](Self::total) is `drain + stop`: what one unit may cost across
+/// both stages, and what a unit declaring its own timeout is shortening.
+///
+/// [`ComponentDescriptor::shutdown_timeout`]: field@ComponentDescriptor::shutdown_timeout
+///
 /// ```
 /// use core::time::Duration;
 /// use kernel_core::ShutdownPolicy;
@@ -493,13 +526,16 @@ impl Default for ShutdownPolicy {
     }
 }
 
-/// Identity, criticality and time bounds of one runnable.
+/// Criticality and time bounds of one runnable.
+///
+/// It carries no name, for the same reason [`ComponentDescriptor`] carries
+/// none: the name is declared once, on the trait.
 ///
 /// ```
 /// use core::time::Duration;
 /// use kernel_core::{Criticality, RunnableDescriptor};
 ///
-/// static DESCRIPTOR: RunnableDescriptor = RunnableDescriptor::new("sample")
+/// static DESCRIPTOR: RunnableDescriptor = RunnableDescriptor::new()
 ///     .criticality(Criticality::Ancillary)
 ///     .drain_timeout(Duration::from_secs(2));
 ///
@@ -507,8 +543,6 @@ impl Default for ShutdownPolicy {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RunnableDescriptor {
-    /// Unique, stable name of the runnable.
-    pub name: &'static str,
     /// What its termination means for everything else.
     pub criticality: Criticality,
     /// Whether a failure is retried.
@@ -523,9 +557,8 @@ pub struct RunnableDescriptor {
 
 impl RunnableDescriptor {
     /// An essential, never-restarted runnable with no bound of its own.
-    pub const fn new(name: &'static str) -> Self {
+    pub const fn new() -> Self {
         RunnableDescriptor {
-            name,
             criticality: Criticality::Essential,
             restart: RestartPolicy::Never,
             drain_timeout: None,
@@ -563,9 +596,9 @@ impl RunnableDescriptor {
     }
 }
 
-impl fmt::Display for RunnableDescriptor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name)
+impl Default for RunnableDescriptor {
+    fn default() -> Self {
+        RunnableDescriptor::new()
     }
 }
 
@@ -672,15 +705,15 @@ mod tests {
 
     #[test]
     fn const_descriptors_build() {
-        static COMPONENT: ComponentDescriptor = ComponentDescriptor::new("unit")
+        static COMPONENT: ComponentDescriptor = ComponentDescriptor::new()
             .boot_timeout(Duration::from_secs(5))
             .shutdown_timeout(Duration::from_secs(1));
-        assert_eq!(COMPONENT.name, "unit");
         assert_eq!(COMPONENT.boot_timeout, Some(Duration::from_secs(5)));
         assert_eq!(COMPONENT.shutdown_timeout, Some(Duration::from_secs(1)));
-        assert_eq!(ComponentDescriptor::new("bare").boot_timeout, None);
+        assert_eq!(ComponentDescriptor::new().boot_timeout, None);
+        assert_eq!(ComponentDescriptor::default(), ComponentDescriptor::new());
 
-        static RUNNABLE: RunnableDescriptor = RunnableDescriptor::new("worker")
+        static RUNNABLE: RunnableDescriptor = RunnableDescriptor::new()
             .criticality(Criticality::Ancillary)
             .restart(RestartPolicy::on_failure(
                 3,
@@ -692,10 +725,10 @@ mod tests {
         assert_eq!(RUNNABLE.drain_timeout, Some(Duration::from_secs(2)));
         assert_eq!(RUNNABLE.stop_timeout, Some(Duration::from_secs(4)));
 
-        let bare = RunnableDescriptor::new("bare");
+        let bare = RunnableDescriptor::new();
         assert_eq!(bare.criticality, Criticality::Essential);
         assert_eq!(bare.restart, RestartPolicy::Never);
-        assert_eq!(bare.to_string(), "bare");
+        assert_eq!(bare, RunnableDescriptor::default());
     }
 
     #[test]

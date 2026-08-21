@@ -314,6 +314,46 @@ impl Container {
         self.shared.sealed.load(Ordering::Acquire)
     }
 
+    /// How many bindings the table holds, every lifetime counted.
+    ///
+    /// The count is fixed when the container is built and does not move, so a
+    /// caller reporting the size of the graph reads it once.
+    pub(crate) fn binding_count(&self) -> usize {
+        self.shared.bindings.entries.len()
+    }
+
+    /// Builds every `Shared` binding, in registration order.
+    ///
+    /// [`seal`](Self::seal) turns a late first instantiation into an error; it
+    /// cannot turn one into an impossibility. That only holds once every
+    /// `Shared` value already exists when the seal lands, which is what this
+    /// does — including the bindings no component and no runnable names, such
+    /// as one reachable solely from the `requires` of a `Factory` provider.
+    ///
+    /// Phase four calls it before the first component boots. A provider that
+    /// fails only when it runs therefore fails there, and not on the first unit
+    /// of work in production.
+    ///
+    /// Deliberately blind to the seal: it is what puts the values in place, so
+    /// running it after sealing would be the caller's ordering mistake, not a
+    /// lazy resolution.
+    ///
+    /// # Errors
+    ///
+    /// The first provider that fails stops the sweep and its error is returned.
+    /// Everything built before it stays built.
+    pub(crate) async fn instantiate_shared(&self) -> Result<(), ContainerError> {
+        for (index, entry) in self.shared.bindings.entries.iter().enumerate() {
+            if !matches!(entry.lifetime, Lifetime::Shared) {
+                continue;
+            }
+            self.shared.values[index]
+                .get_or_try_init(|| self.build(entry))
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn resolve<C: ?Sized + Send + Sync + 'static>(
         &self,
         index: usize,

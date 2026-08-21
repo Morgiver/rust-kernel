@@ -1,0 +1,49 @@
+# cargo-deny configuration.
+#
+# Three questions, asked on every push: does anything in the graph carry a
+# published advisory, does every licence in the graph stay compatible with
+# `MIT OR Apache-2.0`, and has anything entered the graph that the dependency
+# allowlist of `ci/check-dependencies.sh` did not sanction.
+
+[graph]
+all-features = true
+
+[advisories]
+# CI runs `cargo deny check --deny warnings`, so an advisory, an unmaintained
+# crate, a yanked version and a stale entry in this file all fail the build.
+# Silencing one is an explicit entry here, with a reason, never a flag on the
+# command line.
+unmaintained = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Everything published under `MIT OR Apache-2.0` must stay redistributable
+# under both, so the allowed set holds only permissive licences.
+# The list holds what the graph actually carries and nothing else: an unused
+# allowance is a warning, and CI denies warnings, so widening the set is a
+# deliberate edit rather than a leftover.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+exceptions = []
+
+[bans]
+# Two copies of one crate in the graph means two incompatible versions of its
+# types, and a kernel whose whole job is one object graph cannot afford that.
+multiple-versions = "deny"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

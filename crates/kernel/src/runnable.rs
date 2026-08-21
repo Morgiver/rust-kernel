@@ -73,8 +73,12 @@ use crate::shutdown::{KernelHandle, Shutdown, ShutdownController};
 /// struct Beacon;
 ///
 /// impl Runnable for Beacon {
+///     fn name() -> &'static str {
+///         "beacon"
+///     }
+///
 ///     fn descriptor(&self) -> RunnableDescriptor {
-///         RunnableDescriptor::new("beacon")
+///         RunnableDescriptor::new()
 ///     }
 ///
 ///     fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
@@ -100,7 +104,19 @@ use crate::shutdown::{KernelHandle, Shutdown, ShutdownController};
 /// });
 /// ```
 pub trait Runnable: Send + Sync + 'static {
-    /// Identity, criticality and time bounds of this runnable.
+    /// The one declared name of this runnable.
+    ///
+    /// Read once, at registration, where the concrete type is still known: it
+    /// becomes the [`RunnableId`] the plan indexes and every record and every
+    /// [`RunError`] blames. There is no second place to declare it.
+    ///
+    /// It is `where Self: Sized` — never dispatched through `dyn Runnable` —
+    /// which is what keeps the trait dyn-compatible.
+    fn name() -> &'static str
+    where
+        Self: Sized;
+
+    /// Criticality and time bounds of this runnable.
     ///
     /// Read by the supervisor before every start and after every end, so it
     /// must be cheap and must not change between calls.
@@ -115,6 +131,12 @@ pub trait Runnable: Send + Sync + 'static {
     /// [`Essential`](kernel_core::Criticality::Essential) runnable it is what
     /// stops the process — which is the point of that criticality, not a
     /// surprise.
+    ///
+    /// It also decides the exit code. An essential runnable that returns while
+    /// other runnables are still running takes the process down before their
+    /// work was done, and the kernel exits non-zero even though this call
+    /// returned `Ok`. Only a run in which *every* runnable returned on its own
+    /// is a completion.
     fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>>;
 }
 
@@ -274,8 +296,12 @@ mod tests {
     }
 
     impl Runnable for Ticker {
+        fn name() -> &'static str {
+            "ticker"
+        }
+
         fn descriptor(&self) -> RunnableDescriptor {
-            RunnableDescriptor::new("ticker").criticality(Criticality::Ancillary)
+            RunnableDescriptor::new().criticality(Criticality::Ancillary)
         }
 
         fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
@@ -299,8 +325,12 @@ mod tests {
     struct Deaf;
 
     impl Runnable for Deaf {
+        fn name() -> &'static str {
+            "deaf"
+        }
+
         fn descriptor(&self) -> RunnableDescriptor {
-            RunnableDescriptor::new("deaf")
+            RunnableDescriptor::new()
         }
 
         fn run(self: Arc<Self>, _cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
@@ -414,7 +444,7 @@ mod tests {
         let unit: Arc<dyn Runnable> = Ticker::new();
         let (cx, controller) = RunContext::detached();
 
-        assert_eq!(unit.descriptor().name, "ticker");
+        assert_eq!(Ticker::name(), "ticker");
         assert_eq!(unit.descriptor().criticality, Criticality::Ancillary);
 
         let task = tokio::spawn(unit.run(cx));

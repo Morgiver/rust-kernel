@@ -1,0 +1,159 @@
+# Guards. Design section 16: a boundary asserted but not verified does not
+# exist. Every job here fails the build — none of them warns.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --no-self-update
+          rustup default stable
+      - run: cargo fmt --all --check
+
+  lint:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --no-self-update
+          rustup default stable
+      - name: Clippy, every target, every feature
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Clippy without default features
+        run: cargo clippy --workspace --all-targets --no-default-features --locked -- -D warnings
+
+  test:
+    name: test (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - run: cargo test --workspace --all-features --locked
+
+  no-default-features:
+    name: build without default features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      # Signal capture sits behind a feature, so the kernel must build and pass
+      # its suite with every default feature switched off.
+      - run: cargo build --workspace --all-targets --no-default-features --locked
+      - run: cargo test --workspace --no-default-features --locked
+
+  msrv:
+    name: build and test on the declared MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The version is READ FROM Cargo.toml. Hardcoding it here would reproduce
+      # the defect this job exists to catch: a `rust-version` nothing verifies
+      # drifts, and drifted unnoticed for two waves.
+      - name: Read the declared MSRV
+        id: msrv
+        run: echo "version=$(./ci/msrv.sh)" >> "$GITHUB_OUTPUT"
+      - name: Install the declared MSRV
+        run: rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal --no-self-update
+      - name: Build
+        run: cargo "+${{ steps.msrv.outputs.version }}" build --workspace --all-targets --all-features --locked
+      - name: Test
+        run: cargo "+${{ steps.msrv.outputs.version }}" test --workspace --all-features --locked
+
+  docs:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      # `missing_docs = "deny"` is declared in the workspace lints and rustdoc
+      # applies it, so an undocumented public item fails here. `-D warnings`
+      # adds the rustdoc-only lints: broken links, invalid code blocks.
+      - name: Document, warning-free
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --all-features --locked
+
+  boundaries:
+    name: boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - name: Lint configuration is still in place
+        run: ./ci/check-lints.sh
+      - name: Licence files match what Cargo.toml claims
+        run: ./ci/check-licenses.sh
+      - name: Dependency allowlist
+        run: ./ci/check-dependencies.sh
+      - name: No domain, transport or technology name
+        run: ./ci/check_vocabulary.py
+      - name: No bundle depends on another bundle
+        run: ./ci/check-bundle-graph.sh
+
+  without-macros:
+    name: suite without the macros crate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - run: ./ci/check-without-macros.sh
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - name: Cache cargo-deny
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-${{ runner.os }}-0.19
+      - name: Install cargo-deny
+        run: command -v cargo-deny >/dev/null || cargo install cargo-deny --locked --version ^0.19
+      # Warnings are denied: an advisory, an unmaintained crate and a stale
+      # entry in deny.toml all stop the build.
+      - name: Advisories, licences, bans, sources
+        run: cargo deny --all-features check --deny warnings
