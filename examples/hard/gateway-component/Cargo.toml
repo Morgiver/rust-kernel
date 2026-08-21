@@ -1,0 +1,17 @@
+[package]
+name = "gateway-component"
+description = "Application-layer illustration: owns the bound socket and the accept loop."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel = { workspace = true }
+kernel-core = { workspace = true }
+gateway-contracts = { path = "../gateway-contracts" }
+tokio = { workspace = true, features = ["rt", "net", "time", "sync", "macros", "io-util"] }
+
+[lints]
+workspace = true

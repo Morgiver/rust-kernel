@@ -36,6 +36,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytes"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -43,6 +49,33 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys",
+]
+
+[[package]]
+name = "gateway-bundle"
+version = "0.1.0"
+dependencies = [
+ "gateway-component",
+ "gateway-contracts",
+ "kernel",
+ "kernel-core",
+]
+
+[[package]]
+name = "gateway-component"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "kernel",
+ "kernel-core",
+ "tokio",
+]
+
+[[package]]
+name = "gateway-contracts"
+version = "0.1.0"
+dependencies = [
+ "kernel-core",
 ]
 
 [[package]]
@@ -171,6 +204,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "service"
+version = "0.1.0"
+dependencies = [
+ "gateway-bundle",
+ "kernel",
+ "kernel-core",
+ "kernel-testkit",
+ "tokio",
+ "worker-bundle",
+]
+
+[[package]]
 name = "signal-hook-registry"
 version = "1.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -178,6 +223,16 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno",
  "libc",
+]
+
+[[package]]
+name = "socket2"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
+dependencies = [
+ "libc",
+ "windows-sys",
 ]
 
 [[package]]
@@ -197,10 +252,12 @@ version = "1.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 dependencies = [
+ "bytes",
  "libc",
  "mio",
  "pin-project-lite",
  "signal-hook-registry",
+ "socket2",
  "tokio-macros",
  "windows-sys",
 ]
@@ -241,4 +298,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
+]
+
+[[package]]
+name = "worker-bundle"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "kernel",
+ "kernel-core",
+ "tokio",
+ "worker-contracts",
+]
+
+[[package]]
+name = "worker-contracts"
+version = "0.1.0"
+dependencies = [
+ "kernel-core",
 ]

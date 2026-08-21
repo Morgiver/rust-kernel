@@ -34,6 +34,13 @@ ALLOWLIST=(
   "audit-contracts|*"
   "audit-bundle|*"
   "app|*"
+  # The hard example: same application layer, same reason.
+  "gateway-contracts|*"
+  "gateway-component|*"
+  "gateway-bundle|*"
+  "worker-contracts|*"
+  "worker-bundle|*"
+  "service|*"
 )
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

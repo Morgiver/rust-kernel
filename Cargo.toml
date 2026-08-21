@@ -9,6 +9,12 @@ members = ["crates/kernel-core", "crates/kernel", "crates/kernel-macros", "crate
     "examples/medium/audit-contracts",
     "examples/medium/audit-bundle",
     "examples/medium/app",
+    "examples/hard/gateway-contracts",
+    "examples/hard/gateway-component",
+    "examples/hard/gateway-bundle",
+    "examples/hard/worker-contracts",
+    "examples/hard/worker-bundle",
+    "examples/hard/service",
 ]
 
 [workspace.package]

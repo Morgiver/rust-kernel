@@ -1,0 +1,21 @@
+[package]
+name = "service"
+description = "Application-layer illustration: the only place the bundles meet."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel = { workspace = true }
+kernel-core = { workspace = true }
+gateway-bundle = { path = "../gateway-bundle" }
+worker-bundle = { path = "../worker-bundle" }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "signal", "macros", "io-util"] }
+
+[dev-dependencies]
+kernel-testkit = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,14 @@
+[package]
+name = "gateway-contracts"
+description = "Application-layer illustration: what an acceptor promises, and what handles a request."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel-core = { workspace = true }
+
+[lints]
+workspace = true

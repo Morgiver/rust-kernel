@@ -1,0 +1,17 @@
+[package]
+name = "gateway-bundle"
+description = "Application-layer illustration: registers the acceptor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel = { workspace = true }
+kernel-core = { workspace = true }
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-component = { path = "../gateway-component" }
+
+[lints]
+workspace = true

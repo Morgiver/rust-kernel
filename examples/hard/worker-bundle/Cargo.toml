@@ -1,0 +1,18 @@
+[package]
+name = "worker-bundle"
+description = "Application-layer illustration: handles requests, and pushes back when it cannot."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel = { workspace = true }
+kernel-core = { workspace = true }
+worker-contracts = { path = "../worker-contracts" }
+gateway-contracts = { path = "../gateway-contracts" }
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
+
+[lints]
+workspace = true
