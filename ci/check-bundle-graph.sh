@@ -7,10 +7,8 @@
 # coupling the design forbids: it makes one bundle unusable without the other
 # and reintroduces the ordering the phases exist to remove.
 #
-# No such crate exists in this repository today, so the guard passes vacuously.
-# It is written for the day one appears, and it looks at the whole resolved
-# graph — a bundle pulled from a registry is checked exactly like a workspace
-# member.
+# It looks at the whole resolved graph — a bundle pulled from a registry is
+# checked exactly like a workspace member.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

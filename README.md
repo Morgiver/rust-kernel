@@ -120,8 +120,23 @@ impl Bundle for Beat {
     }
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+    // Not `#[tokio::main]`. That macro ends the program by dropping the
+    // runtime, and a multi-threaded `Runtime` joins every worker thread in its
+    // own `Drop` with no bound — so a runnable the kernel abandoned, one that
+    // never reached an await point and so never observed its abort, holds the
+    // process up after the ladder has finished and said so. `shutdown_timeout`
+    // is the bound, and building the runtime by hand is what makes it reachable.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    let code = runtime.block_on(run());
+    runtime.shutdown_timeout(Duration::from_secs(5));
+    code
+}
+
+async fn run() -> ExitCode {
     // Phases 1 to 3. No I/O, no instantiation. `?` is unavailable here:
     // `ExitCode` does not implement `FromResidual`.
     let kernel = match Kernel::builder().bundle(Beat).build().await {

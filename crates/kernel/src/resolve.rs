@@ -24,7 +24,7 @@
 //! # Aggregation, not first failure
 //!
 //! Every check collects. A start-up that reveals one error at a time, six times
-//! in a row, is a tooling defect, so all ten checks run over the whole
+//! in a row, is a tooling defect, so all eleven checks run over the whole
 //! registry and the violations come back together in one
 //! [`Vec<ResolveError>`](ResolveError). The order is deterministic: checks run
 //! in a fixed sequence and each one walks its input in registration order.
@@ -138,19 +138,23 @@ pub struct Resolved {
 ///    manifest detectable rather than decorative.
 /// 7. [`UnknownBundleOrder`] — an ordering constraint naming a bundle that is
 ///    not registered.
-/// 8. [`BundleCycle`] — a cycle among the bundle ordering constraints, which
+/// 8. [`BundleOutOfOrder`] — a bundle registered before one it declares itself
+///    after, which the builder cannot honour: it registers in declaration
+///    order and reorders nothing.
+/// 9. [`BundleCycle`] — a cycle among the bundle ordering constraints, which
 ///    no registration order can satisfy.
-/// 9. [`DuplicateBundle`] — one name registered by two bundles, which makes
-///    every ordering constraint and every attribution that names it ambiguous.
-/// 10. [`LifetimeConflict`] — a requirer that is not itself `Scoped` and
+/// 10. [`DuplicateBundle`] — one name registered by two bundles, which makes
+///     every ordering constraint and every attribution that names it ambiguous.
+/// 11. [`LifetimeConflict`] — a requirer that is not itself `Scoped` and
 ///     requires a `Scoped` binding, which no scope can ever satisfy. Every
 ///     non-`Scoped` binding and every listener is a requirer here.
 ///
 /// A requirement is declared by a provider, by a listener or by a manifest, and
-/// checks 1, 6 and 10 read the listeners too: a listener that resolves during
+/// checks 1, 6 and 11 read the listeners too: a listener that resolves during
 /// dispatch is checked here or nowhere.
 ///
 /// [`BundleCycle`]: ResolveError::BundleCycle
+/// [`BundleOutOfOrder`]: ResolveError::BundleOutOfOrder
 /// [`LifetimeConflict`]: ResolveError::LifetimeConflict
 /// [`DuplicateBundle`]: ResolveError::DuplicateBundle
 /// [`MissingContract`]: ResolveError::MissingContract
@@ -199,6 +203,7 @@ pub fn resolve(
     undeclared_points(&parts, &mut errors);
     manifest_mismatches(&parts, manifests, &mut errors);
     unknown_bundle_order(manifests, &mut errors);
+    bundle_order(manifests, &mut errors);
     bundle_cycles(manifests, &mut errors);
     duplicate_bundles(manifests, &mut errors);
     lifetime_conflicts(&parts, &index, &mut errors);
@@ -566,7 +571,7 @@ fn manifest_mismatches(
 }
 
 // --------------------------------------------------------------------------
-// 7 and 8. Bundle ordering
+// 7, 8 and 9. Bundle ordering
 // --------------------------------------------------------------------------
 
 /// Every ordering constraint naming a bundle that is not registered.
@@ -577,6 +582,34 @@ fn unknown_bundle_order(manifests: &[BundleManifest], errors: &mut Vec<ResolveEr
         for after in manifest.after {
             if !known.contains_key(after) {
                 errors.push(ResolveError::UnknownBundleOrder {
+                    bundle: manifest.name,
+                    after,
+                });
+            }
+        }
+    }
+}
+
+/// Every bundle registered before a bundle it declares itself `after`.
+///
+/// The builder registers in declaration order and reorders nothing, so an
+/// `after` constraint is honoured by the assembly or not at all. Checking it
+/// here is what makes the field mean something: without this, a manifest could
+/// state an order the run then ignored, and the first symptom would be a
+/// bundle reading a registration that had not happened yet.
+///
+/// A constraint naming an unregistered bundle is left to
+/// [`unknown_bundle_order`]: it has no position to compare against, and
+/// reporting it twice would blame one mistake in two voices.
+fn bundle_order(manifests: &[BundleManifest], errors: &mut Vec<ResolveError>) {
+    let known = bundle_positions(manifests);
+
+    for (position, manifest) in manifests.iter().enumerate() {
+        for after in manifest.after {
+            if let Some(target) = known.get(after).copied()
+                && position < target
+            {
+                errors.push(ResolveError::BundleOutOfOrder {
                     bundle: manifest.name,
                     after,
                 });
@@ -629,7 +662,7 @@ fn bundle_positions(manifests: &[BundleManifest]) -> HashMap<&'static str, usize
 }
 
 // --------------------------------------------------------------------------
-// 9. Duplicate bundle names
+// 10. Duplicate bundle names
 // --------------------------------------------------------------------------
 
 /// Every name registered by more than one bundle.
@@ -656,7 +689,7 @@ fn duplicate_bundles(manifests: &[BundleManifest], errors: &mut Vec<ResolveError
 }
 
 // --------------------------------------------------------------------------
-// 10. Lifetime compatibility
+// 11. Lifetime compatibility
 // --------------------------------------------------------------------------
 
 /// Every shared binding that requires a scoped one.
@@ -1044,6 +1077,7 @@ mod tests {
                 ResolveError::UndeclaredExtensionPoint { .. } => "extension",
                 ResolveError::ManifestMismatch { .. } => "manifest",
                 ResolveError::UnknownBundleOrder { .. } => "order",
+                ResolveError::BundleOutOfOrder { .. } => "bundle-order",
                 ResolveError::BundleCycle { .. } => "bundle-cycle",
                 ResolveError::DuplicateBundle { .. } => "duplicate-bundle",
                 ResolveError::LifetimeConflict { .. } => "lifetime",
@@ -1154,7 +1188,7 @@ mod tests {
     // `kinds` matches exhaustively, so a check added without a line here does
     // not compile.
     #[test]
-    fn aggregates_all_ten() {
+    fn aggregates_all_eleven() {
         static ONE_REQUIRES: [ContractRef; 1] = [ContractRef::of::<dyn Beta>()];
         static AFTER_TWO: [&str; 1] = ["two"];
         static AFTER_ONE: [&str; 2] = ["one", "absent"];
@@ -1185,11 +1219,12 @@ mod tests {
         registry.provide_named("keeper", beta().requires([ContractRef::of::<dyn Delta>()]));
         // 6. `one` declares a requirement none of its providers states.
         // 7. `two` orders itself after a bundle that is not registered.
-        // 8. `one` and `two` order each other.
-        // 9. a third manifest registers the name `one` a second time.
+        // 8. `one` is registered before `two`, which it orders itself after.
+        // 9. `one` and `two` order each other.
+        // 10. a third manifest registers the name `one` a second time.
 
         let errors =
-            resolve(registry, &[ONE, TWO, ONE_AGAIN]).expect_err("ten violations were planted");
+            resolve(registry, &[ONE, TWO, ONE_AGAIN]).expect_err("eleven violations were planted");
 
         assert_eq!(
             kinds(&errors),
@@ -1201,6 +1236,7 @@ mod tests {
                 "extension",
                 "manifest",
                 "order",
+                "bundle-order",
                 "bundle-cycle",
                 "duplicate-bundle",
                 "lifetime",
@@ -1561,7 +1597,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // 7 and 8. Bundle ordering
+    // 7, 8 and 9. Bundle ordering
     // ------------------------------------------------------------------
 
     #[test]
@@ -1586,7 +1622,40 @@ mod tests {
         static ONE: BundleManifest = BundleManifest::new("one", "0.1.0").after(&AFTER);
         static TWO: BundleManifest = BundleManifest::new("two", "0.1.0");
 
-        assert!(resolve(registry(), &[ONE, TWO]).is_ok());
+        assert!(resolve(registry(), &[TWO, ONE]).is_ok());
+    }
+
+    #[test]
+    fn late_after_reported() {
+        static AFTER: [&str; 1] = ["two"];
+        static ONE: BundleManifest = BundleManifest::new("one", "0.1.0").after(&AFTER);
+        static TWO: BundleManifest = BundleManifest::new("two", "0.1.0");
+
+        let errors = resolve(registry(), &[ONE, TWO]).expect_err("`one` registers before `two`");
+
+        match &errors[..] {
+            [ResolveError::BundleOutOfOrder { bundle, after }] => {
+                assert_eq!(*bundle, "one");
+                assert_eq!(*after, "two");
+                assert_eq!(
+                    errors[0].to_string(),
+                    "bundle `one` is registered before `two`, which it must come after"
+                );
+            }
+            other => panic!("expected one order violation, got {other:?}"),
+        }
+    }
+
+    // An unknown target has no position to compare against, so the same
+    // mistake is not blamed twice.
+    #[test]
+    fn unknown_after_not_doubled() {
+        static AFTER: [&str; 1] = ["absent"];
+        static ONE: BundleManifest = BundleManifest::new("one", "0.1.0").after(&AFTER);
+
+        let errors = resolve(registry(), &[ONE]).expect_err("`absent` is not registered");
+
+        assert_eq!(kinds(&errors), ["order"]);
     }
 
     #[test]
@@ -1599,20 +1668,23 @@ mod tests {
         let errors =
             resolve(registry(), &[ONE, TWO]).expect_err("the two bundles order each other");
 
-        match &errors[..] {
-            [ResolveError::BundleCycle { path }] => {
+        // The cycle comes with the order violation it forces: whichever of the
+        // two is registered first is registered before the one it names.
+        assert_eq!(kinds(&errors), ["bundle-order", "bundle-cycle"]);
+        match &errors[1] {
+            ResolveError::BundleCycle { path } => {
                 assert_eq!(path, &["one", "two", "one"]);
                 assert_eq!(
-                    errors[0].to_string(),
+                    errors[1].to_string(),
                     "bundle ordering cycle: one -> two -> one"
                 );
             }
-            other => panic!("expected one bundle cycle, got {other:?}"),
+            other => panic!("expected a bundle cycle, got {other:?}"),
         }
     }
 
     // ------------------------------------------------------------------
-    // 9. Duplicate bundle names
+    // 10. Duplicate bundle names
     // ------------------------------------------------------------------
 
     #[test]
@@ -1653,7 +1725,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // 10. Lifetime compatibility
+    // 11. Lifetime compatibility
     // ------------------------------------------------------------------
 
     #[test]

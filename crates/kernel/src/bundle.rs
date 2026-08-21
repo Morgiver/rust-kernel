@@ -103,8 +103,11 @@ pub trait Bundle: Send + Sync + 'static {
     /// `requires` entry no binding satisfies is a graph error attributed to
     /// this bundle by name, reported before the graph walk so the diagnostic
     /// reads as a missing dependency rather than as a deep resolution failure.
-    /// A manifest that claims less than the bundle actually registers is
-    /// rejected too — a decorative manifest is worse than none.
+    /// Only the over-claim direction is checked: a manifest that requires what
+    /// its own providers and listeners do not is rejected, and one that stays
+    /// silent about a requirement they already declare is not. The declaration
+    /// the graph is closed on is the binding's, so demanding the manifest
+    /// restate it would buy nothing and cost every bundle a second copy.
     fn manifest(&self) -> BundleManifest;
 
     /// Writes this bundle's declarations into the registry.

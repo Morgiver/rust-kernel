@@ -5,7 +5,9 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use kernel_core::error::BoxSource;
-use kernel_core::{ComponentError, ComponentId, Level, Record, ShutdownPolicy, Telemetry};
+use kernel_core::{
+    ComponentError, ComponentId, Level, Record, ShutdownError, ShutdownPolicy, Telemetry,
+};
 use tokio::time::{Instant, timeout};
 
 use crate::component::{BootContext, Component, ShutdownContext};
@@ -23,8 +25,12 @@ use crate::shutdown::ShutdownController;
 /// component.
 const GRAPH: ComponentId = ComponentId::new("graph", u32::MAX);
 
+/// Telemetry event name for the start of phase four.
+const BOOT_STARTED: &str = "kernel.boot_started";
 /// Telemetry event name for a component that booted.
 const BOOTED: &str = "kernel.component_booted";
+/// Telemetry event name for the end of phase four.
+const BOOT_COMPLETED: &str = "kernel.boot_completed";
 /// Telemetry event name for the failure that ends phase four.
 const FAILED: &str = "kernel.boot_failed";
 /// Telemetry event name for a rollback shutdown that failed on its way out.
@@ -51,6 +57,20 @@ impl core::fmt::Debug for Booted {
             )
             .finish()
     }
+}
+
+/// What a rollback walk stopped, and what refused to stop.
+///
+/// Both halves are reported because both are facts an operator acts on: the
+/// walk covered every component, and some of them did not stop cleanly. A
+/// failure to stop never holds the walk up — it only reaches the exit status,
+/// which is what section 12's fatality table asks of it.
+#[derive(Debug, Default)]
+pub(crate) struct RolledBack {
+    /// Components stopped again, in the order they were stopped.
+    pub stopped: Vec<ComponentId>,
+    /// The failures of the ones that did not stop cleanly, in the same order.
+    pub failures: Vec<ShutdownError>,
 }
 
 /// Phase four failed, and what had to be unwound because of it.
@@ -126,8 +146,13 @@ pub(crate) async fn boot(
     let dispatcher: &EventDispatcher = &resolved.dispatcher;
     let telemetry = Arc::clone(container.telemetry());
 
+    let planned = resolved.plan.components.len();
+    // Recorded as well as emitted: an operator reads the telemetry stream as
+    // the log of what happened, and a phase boundary missing from it is a gap
+    // in the timeline.
+    telemetry.record(Record::new(Level::Info, BOOT_STARTED).with("components", count(planned)));
     dispatcher.emit(BootStarted {
-        components: resolved.plan.components.len(),
+        components: planned,
     });
 
     // The whole table, not the reachable part of it. See above.
@@ -144,10 +169,15 @@ pub(crate) async fn boot(
     let mut booted = Booted {
         components: Vec::new(),
     };
-    let cx = BootContext::new(container, dispatcher, &resolved.extensions);
 
     for id in resolved.plan.components.iter().copied() {
         let entry = &resolved.components[id.index() as usize];
+        // One context per component, over a container framed by what that
+        // component's own `requires` declares. The debug guard then covers a
+        // resolution made from `boot` exactly as it covers one made from the
+        // provider that built it.
+        let framed = container.for_unit(entry.contract);
+        let cx = BootContext::new(&framed, dispatcher, &resolved.extensions);
 
         let component = match (entry.build)(container).await {
             Ok(component) => component,
@@ -181,9 +211,13 @@ pub(crate) async fn boot(
     }
 
     container.seal();
-    dispatcher.emit(BootCompleted {
-        elapsed: started.elapsed(),
-    });
+    let elapsed = started.elapsed();
+    telemetry.record(
+        Record::new(Level::Info, BOOT_COMPLETED)
+            .with("components", count(booted.components.len()))
+            .with("elapsed", elapsed),
+    );
+    dispatcher.emit(BootCompleted { elapsed });
 
     Ok(booted)
 }
@@ -221,9 +255,12 @@ pub(crate) async fn rollback(
     booted: Booted,
     cx: &ShutdownContext<'_>,
     stop: Duration,
-) -> Vec<ComponentId> {
+) -> RolledBack {
     let telemetry = Arc::clone(cx.telemetry());
-    let mut stopped = Vec::with_capacity(booted.components.len());
+    let mut rolled = RolledBack {
+        stopped: Vec::with_capacity(booted.components.len()),
+        failures: Vec::new(),
+    };
 
     for (id, component) in booted.components.into_iter().rev() {
         let budget = allowance(component.descriptor().shutdown_timeout, stop);
@@ -237,17 +274,27 @@ pub(crate) async fn rollback(
             cx.shutdown(),
             (Instant::now() + budget).into_std(),
         );
-        if let Err(error) = bounded(Some(budget), "shutdown", id, component.shutdown(&unit)).await {
+        // The timeout is run here rather than through `bounded` because the two
+        // ways of failing to stop are told apart on the way out: a refusal
+        // carries the component's own cause, an overrun carries none, and
+        // `ShutdownError` names them separately.
+        let failure = match timeout(budget, component.shutdown(&unit)).await {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(ShutdownError::failed(id.name(), Box::new(error))),
+            Err(_) => Some(ShutdownError::deadline_exceeded(id.name())),
+        };
+        if let Some(failure) = failure {
             telemetry.record(
                 Record::new(Level::Error, ROLLBACK_FAILED)
                     .with("component", id.name())
-                    .with("error", error.to_string()),
+                    .with("error", failure.to_string()),
             );
+            rolled.failures.push(failure);
         }
-        stopped.push(id);
+        rolled.stopped.push(id);
     }
 
-    stopped
+    rolled
 }
 
 /// Runs one lifecycle call under an optional budget.
@@ -300,7 +347,10 @@ async fn unwind(
     let (controller, shutdown) = ShutdownController::new(policy);
     controller.begin_stopping();
     let cx = ShutdownContext::new(&resolved.container, &resolved.dispatcher, &shutdown);
-    let rolled_back = rollback(booted, &cx, policy.stop).await;
+    // The stop failures are recorded by `rollback` and go no further here: the
+    // outcome this produces is already a failure, and its cause is the boot
+    // that failed rather than the unwind that followed it.
+    let rolled_back = rollback(booted, &cx, policy.stop).await.stopped;
     controller.finish();
 
     BootFailure {
@@ -308,6 +358,11 @@ async fn unwind(
         source,
         rolled_back,
     }
+}
+
+/// A count, in the only integer shape a record carries.
+fn count(value: usize) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 /// Records the failure that ends phase four.
@@ -498,6 +553,87 @@ mod tests {
         let observed: Vec<ComponentId> = booted.components.iter().map(|(id, _)| *id).collect();
         assert_eq!(observed, planned(&resolved));
         assert!(format!("{booted:?}").contains("alpha"));
+    }
+
+    /// Resolves `Buried` from its boot context, declaring whatever it was
+    /// registered with.
+    struct Reaching;
+
+    impl Component for Reaching {
+        fn name() -> &'static str {
+            "reaching"
+        }
+
+        fn descriptor(&self) -> ComponentDescriptor {
+            ComponentDescriptor::new()
+        }
+
+        fn boot<'a>(
+            &'a self,
+            cx: &'a BootContext<'a>,
+        ) -> BoxFuture<'a, Result<(), ComponentError>> {
+            Box::pin(async move {
+                let _ = cx.container().get::<dyn Buried>().await;
+                Ok(())
+            })
+        }
+    }
+
+    /// The binding `Reaching` reads, plus the component itself.
+    fn reaching(requires: Vec<ContractRef>) -> Registry {
+        let sink = RecordingTelemetry::new();
+        let mut registry = registry(&sink);
+        registry.provide::<dyn Buried>(Provider::from_value(Arc::new(Deep) as Arc<dyn Buried>));
+        registry.component(Provider::from_value(Arc::new(Reaching)).requires(requires));
+        registry
+    }
+
+    // Section 2 holds for a boot as much as for a build: the container a
+    // component boots against is framed by that component's own `requires`.
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    #[should_panic(expected = "did not declare in `requires`")]
+    async fn boot_guard_refuses_undeclared() {
+        let resolved = resolve(reaching(Vec::new()), &[]).expect("resolve");
+
+        let _ = boot(&resolved, ShutdownPolicy::DEFAULT).await;
+    }
+
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    async fn boot_guard_allows_declared() {
+        let resolved =
+            resolve(reaching(vec![ContractRef::of::<dyn Buried>()]), &[]).expect("resolve");
+
+        assert!(boot(&resolved, ShutdownPolicy::DEFAULT).await.is_ok());
+    }
+
+    // Section 14: every phase transition produces a record, not only an event.
+    #[tokio::test]
+    async fn boot_records_both_edges() {
+        let trace = Trace::default();
+        let sink = RecordingTelemetry::new();
+        let mut registry = registry(&sink);
+        registry.component(Provider::from_value(Arc::new(Unit::<0>::new(&trace))));
+
+        let resolved = resolve(registry, &[]).expect("resolve");
+        boot(&resolved, ShutdownPolicy::DEFAULT)
+            .await
+            .expect("boot");
+
+        let names: Vec<String> = sink
+            .records()
+            .into_iter()
+            .map(|record| record.event.to_string())
+            .collect();
+        assert_eq!(
+            names.first().map(String::as_str),
+            Some("kernel.boot_started")
+        );
+        assert_eq!(
+            names.last().map(String::as_str),
+            Some("kernel.boot_completed")
+        );
     }
 
     #[tokio::test]
@@ -795,11 +931,11 @@ mod tests {
         };
 
         let cx = ShutdownContext::new(container, dispatcher, shutdown);
-        let stopped = rollback(booted, &cx, ShutdownPolicy::DEFAULT.stop).await;
+        let rolled = rollback(booted, &cx, ShutdownPolicy::DEFAULT.stop).await;
 
         // The reader really was stopped second, which is where the two
         // deadlines part company.
-        assert_eq!(stopped, [Unit::<1>::id(), Reader::id()]);
+        assert_eq!(rolled.stopped, [Unit::<1>::id(), Reader::id()]);
         seen.lock().expect("seen").expect("stopped")
     }
 

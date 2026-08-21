@@ -47,6 +47,7 @@ mod contracts;
 mod ledger;
 mod orders;
 
+use core::time::Duration;
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -78,12 +79,50 @@ fn defaults() -> MemorySource {
     MemorySource::named("defaults", tree)
 }
 
+/// How long the runtime is given to let go of its worker threads.
+///
+/// The last unbounded wait in a process built on this kernel is not the
+/// kernel's. Section 13 bounds every rung of the ladder, and the kernel keeps
+/// that promise: a runnable that overruns its budget is aborted, recorded as
+/// `runnable.abandoned`, and never waited for. But an abort is only observed at
+/// an await point, so a task that never reaches one goes on running — and
+/// `Runtime`'s own `Drop`, which is how `#[tokio::main]` ends a program, joins
+/// every worker thread with no bound at all. The ladder finishes, says so, and
+/// the process still does not exit.
+///
+/// [`tokio::runtime::Runtime::shutdown_timeout`] is that bound, and it is why
+/// this `main` builds its runtime by hand rather than taking the macro's. The
+/// value is generous: it is the wait before a task that ignores its own
+/// cancellation is left behind, not a budget anything spends on the way out.
+const TEARDOWN: Duration = Duration::from_secs(5);
+
+/// Runs the application on a runtime whose teardown is bounded.
+///
+/// What the kernel guarantees ends when [`Kernel::run`] returns; what happens
+/// to the runtime afterwards is the application's, and this is the whole of it.
+/// See [`TEARDOWN`].
+fn main() -> ExitCode {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("minimal: no runtime: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let code = runtime.block_on(run());
+    runtime.shutdown_timeout(TEARDOWN);
+    code
+}
+
 /// Builds the kernel, runs it, and reports what happened.
 ///
 /// `?` is not usable here: [`ExitCode`] does not implement `FromResidual`, so
 /// a refused build is rendered explicitly instead of propagated.
-#[tokio::main]
-async fn main() -> ExitCode {
+async fn run() -> ExitCode {
     println!("minimal: starting — press Ctrl-C to stop");
 
     // Phases one to three: configuration is loaded, the bundles register, the

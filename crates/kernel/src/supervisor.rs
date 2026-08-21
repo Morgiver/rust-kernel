@@ -36,8 +36,8 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use kernel_core::{
-    Criticality, Level, Record, RestartPolicy, RunError, RunnableDescriptor, RunnableId, Stage,
-    Telemetry,
+    ContractId, Criticality, Level, Record, RestartPolicy, RunError, RunnableDescriptor,
+    RunnableId, Stage, Telemetry,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::Instant;
@@ -64,6 +64,9 @@ struct Slot {
     restarts: u32,
     /// The live task, or `None` once it has ended for good.
     task: Option<JoinHandle<Result<(), RunError>>>,
+    /// The container every run of this runnable resolves against, framed by
+    /// what the runnable's own `requires` declares.
+    container: Container,
 }
 
 /// Owns the running tasks and decides when the kernel must stop.
@@ -92,8 +95,13 @@ impl Supervisor {
     /// The four trailing arguments are exactly what [`RunContext::new`] takes:
     /// the supervisor builds one context per start, so a restarted runnable
     /// gets a fresh context watching the same token.
+    ///
+    /// Each runnable is named with the contract its own binding answers, which
+    /// is what frames the container it resolves through: the debug guard then
+    /// covers a resolution made from `run` against the same `requires` phase
+    /// three checked.
     pub(crate) fn start(
-        runnables: Vec<(RunnableId, Arc<dyn Runnable>)>,
+        runnables: Vec<(RunnableId, ContractId, Arc<dyn Runnable>)>,
         container: Container,
         dispatcher: Arc<EventDispatcher>,
         shutdown: Shutdown,
@@ -110,9 +118,10 @@ impl Supervisor {
             errors: Vec::new(),
         };
 
-        for (id, runnable) in runnables {
+        for (id, contract, runnable) in runnables {
             let descriptor = runnable.descriptor();
-            let task = supervisor.spawn(id, &runnable, None);
+            let container = supervisor.container.for_unit(contract);
+            let task = supervisor.spawn(id, &runnable, &container, None);
             supervisor.record(Level::Info, "runnable.started", id, |record| {
                 record.with("attempt", 0u32)
             });
@@ -122,6 +131,7 @@ impl Supervisor {
                 descriptor,
                 restarts: 0,
                 task: Some(task),
+                container,
             });
         }
 
@@ -192,11 +202,12 @@ impl Supervisor {
         &self,
         id: RunnableId,
         runnable: &Arc<dyn Runnable>,
+        container: &Container,
         delay: Option<Duration>,
     ) -> JoinHandle<Result<(), RunError>> {
         let context = RunContext::new(
             id,
-            self.container.clone(),
+            container.clone(),
             Arc::clone(&self.dispatcher),
             self.shutdown.clone(),
             self.handle.clone(),
@@ -266,7 +277,8 @@ impl Supervisor {
             RestartPolicy::OnFailure { backoff, .. } => backoff.delay(attempt),
         };
         let runnable = Arc::clone(&self.slots[index].runnable);
-        let task = self.spawn(id, &runnable, Some(delay));
+        let container = self.slots[index].container.clone();
+        let task = self.spawn(id, &runnable, &container, Some(delay));
 
         self.slots[index].restarts = attempt + 1;
         self.slots[index].task = Some(task);
@@ -593,11 +605,19 @@ mod tests {
         let (controller, shutdown) = ShutdownController::new(policy);
 
         // The kernel names a unit from its own declaration; here the test
-        // stands in for the registry and names them by position.
+        // stands in for the registry and names them by position. The container
+        // holds no binding, so the contract frames nothing — what these tests
+        // pin is the supervision, not the guard.
         let runnables = units
             .into_iter()
             .enumerate()
-            .map(|(index, unit)| (RunnableId::new(NAMES[index], index as u32), unit))
+            .map(|(index, unit)| {
+                (
+                    RunnableId::new(NAMES[index], index as u32),
+                    ContractId::of::<dyn Runnable>(),
+                    unit,
+                )
+            })
             .collect();
 
         let supervisor =

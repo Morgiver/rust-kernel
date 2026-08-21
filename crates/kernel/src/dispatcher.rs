@@ -105,7 +105,10 @@ pub trait Listener<E: Event>: Send + Sync + 'static {
     /// Handles one event.
     ///
     /// Returning [`Flow::Stop`] ends sequential propagation; it is not an
-    /// error, and the emitter still gets a successful [`Dispatched`].
+    /// error, and the emitter still gets a successful [`Dispatched`]. It is
+    /// read by [`EventDispatcher::dispatch`] alone: a detached
+    /// [`emit`](EventDispatcher::emit) runs every listener whatever this
+    /// returns.
     fn on_event<'a>(
         &'a self,
         event: &'a mut E,
@@ -601,6 +604,13 @@ impl EventDispatcher {
     /// notification that stops halfway because one subscriber is broken is
     /// worse than one that does not.
     ///
+    /// [`Flow::Stop`] is ignored here for the same reason, and it is
+    /// [`dispatch`](Self::dispatch) alone that reads it. Propagation control
+    /// answers an emitter; a notification has none. Honouring it would let one
+    /// listener decide, for every listener registered below it, whether an
+    /// event was ever published — and the kernel publishes all but one of its
+    /// own lifecycle events this way.
+    ///
     /// Detached is not lost. The walk is counted before it is spawned and
     /// counted out when it ends, so [`settle`](Self::settle) can wait for it —
     /// which is what the kernel's shutdown ladder does. Emitting and then
@@ -642,7 +652,10 @@ impl EventDispatcher {
 
             for slot in slots.iter() {
                 match (slot.call)(&mut *erased, &cx).await {
-                    Ok(flow) if flow.is_stop() => break,
+                    // `Flow::Stop` is read by `dispatch` and by nothing else.
+                    // A notification has no emitter to answer to, so letting
+                    // one listener end the walk would let it decide, for every
+                    // listener below it, whether an event happened at all.
                     Ok(_) => {}
                     Err(cause) => telemetry.record(
                         Record::new(Level::Error, FAILED)
@@ -830,6 +843,25 @@ mod tests {
             Box::pin(async move {
                 let _ = self.sender.send(self.mark);
                 Ok(Flow::Continue)
+            })
+        }
+    }
+
+    /// Reports through a channel, then asks for the walk to end.
+    struct Halting {
+        mark: &'static str,
+        sender: mpsc::UnboundedSender<&'static str>,
+    }
+
+    impl Listener<Alpha> for Halting {
+        fn on_event<'a>(
+            &'a self,
+            _event: &'a mut Alpha,
+            _cx: &'a ListenerContext<'a>,
+        ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+            Box::pin(async move {
+                let _ = self.sender.send(self.mark);
+                Ok(Flow::Stop)
             })
         }
     }
@@ -1201,6 +1233,41 @@ mod tests {
 
         assert_eq!(receiver.recv().await, Some("high"));
         assert_eq!(receiver.recv().await, Some("low"));
+    }
+
+    // `Flow::Stop` belongs to `dispatch`. A detached walk ignores it, so one
+    // high-priority listener cannot hide an emitted event from the rest.
+    #[tokio::test]
+    async fn emit_ignores_stop() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let dispatcher = attached(vec![
+            entry::<Alpha, _>(
+                Halting {
+                    mark: "high",
+                    sender: sender.clone(),
+                },
+                "b1",
+                1,
+                0,
+            ),
+            entry::<Alpha, _>(
+                Reporting {
+                    mark: "low",
+                    sender,
+                },
+                "b2",
+                -1,
+                1,
+            ),
+        ]);
+
+        dispatcher.emit(alpha());
+        // Settled rather than awaited on the channel: a walk that stopped
+        // early must show up as a missing mark, not as a test that hangs.
+        dispatcher.settle().await;
+
+        assert_eq!(receiver.try_recv().ok(), Some("high"));
+        assert_eq!(receiver.try_recv().ok(), Some("low"));
     }
 
     #[tokio::test]

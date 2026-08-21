@@ -24,13 +24,13 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use kernel_core::{
-    ConfigSource, KernelError, Level, NoopTelemetry, Outcome, Record, RunError, RunErrorKind,
-    RunnableId, ShutdownError, ShutdownPolicy, Telemetry,
+    ConfigSource, ContractId, KernelError, Level, NoopTelemetry, Outcome, Record, RunError,
+    RunErrorKind, RunnableId, ShutdownError, ShutdownPolicy, Telemetry,
 };
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-use crate::boot::{Booted, boot, rollback};
+use crate::boot::{Booted, RolledBack, boot, rollback};
 use crate::bundle::Bundle;
 use crate::component::ShutdownContext;
 use crate::config::ConfigChain;
@@ -67,6 +67,8 @@ const REQUESTED: &str = "kernel.shutdown_requested";
 const STOPPED: &str = "kernel.stopped";
 /// Telemetry event name for a listener that failed on the shutdown request.
 const LISTENER_FAILED: &str = "kernel.request_listener_failed";
+/// Telemetry event name for a shutdown request that outlived the drain budget.
+const REQUEST_OVERRAN: &str = "kernel.request_overran";
 /// Telemetry event name for a runnable that could not be resolved at start.
 const START_FAILED: &str = "kernel.runnable_start_failed";
 /// Telemetry event name for detached emissions that outlived the stop.
@@ -367,12 +369,16 @@ impl Kernel {
     /// stopped one after another and each gets `stop` afresh, counted from the
     /// moment its own `shutdown` is called.
     ///
+    /// The shutdown request is dispatched before either half, and that wait is
+    /// capped at `drain`: it is where the drain begins, and an awaited dispatch
+    /// hands a listener the whole process until it returns.
+    ///
     /// The detached emissions are awaited twice — once before the components
     /// go down, once after the last event of the run — and each wait is capped
     /// at `stop` as well.
     ///
     /// Worst case for a whole shutdown is therefore
-    /// `drain + stop + (stop × components) + 2 × stop` — it grows with the
+    /// `2 × drain + stop + (stop × components) + 2 × stop` — it grows with the
     /// number of components, and that is the price, stated rather than hidden.
     /// What it buys is the rule that a unit is never abandoned because another
     /// unit overran. A shared deadline would let one slow component consume the
@@ -391,6 +397,38 @@ impl Kernel {
     /// task carries it through. What the caller loses by dropping is the
     /// [`Outcome`], not the release of resources — so selecting over `run` is
     /// safe, as long as the runtime outlives the drop.
+    ///
+    /// # The wait after this one belongs to the caller
+    ///
+    /// Every rung above is bounded, and this returning means the ladder is
+    /// over. It does NOT mean every task is gone: a runnable that overran its
+    /// budget was aborted, recorded as `runnable.abandoned`, and never waited
+    /// for — and an abort is only observed at an await point, so one that never
+    /// reaches one goes on occupying a worker thread.
+    ///
+    /// The kernel does not own the runtime and cannot end it. A multi-threaded
+    /// `Runtime` joins every worker thread in its own `Drop`, with no bound, so
+    /// an application that ends on that drop — which is what `#[tokio::main]`
+    /// does — can complete this whole ladder, report a successful [`Outcome`],
+    /// and never exit. Tear the runtime down with a bound instead:
+    ///
+    /// ```no_run
+    /// # use core::time::Duration;
+    /// # fn build() -> kernel::KernelBuilder { kernel::Kernel::builder() }
+    /// let runtime = tokio::runtime::Builder::new_multi_thread()
+    ///     .enable_all()
+    ///     .build()
+    ///     .expect("a runtime");
+    /// let outcome = runtime.block_on(async {
+    ///     build().build().await.expect("a graph").run().await
+    /// });
+    /// runtime.shutdown_timeout(Duration::from_secs(5));
+    /// # let _ = outcome;
+    /// ```
+    ///
+    /// Both examples in this repository end that way, and
+    /// `crates/kernel/tests/exit.rs` holds the bound against a runnable built
+    /// to defeat everything except it.
     pub async fn run(self) -> Outcome {
         // Armed before the task is spawned, so a drop between the two still
         // reaches the kernel: the handle is the same object the driver watches.
@@ -527,17 +565,32 @@ async fn drive(kernel: Kernel) -> Outcome {
 
     // Dispatched, not emitted: a listener may enrich the request, and the
     // ladder does not move until every one of them has been heard.
+    //
+    // Bounded like every other rung, and on the drain budget, because this is
+    // where the drain begins: an awaited dispatch hands a third-party listener
+    // the whole process, and section 13 promises the kernel never blocks
+    // indefinitely. Elapsing drops the walk rather than detaching it — a
+    // listener cut here must not go on enriching a request nobody is reading —
+    // and the ladder continues with whatever notes were gathered before the
+    // deadline.
     let mut request = ShutdownRequested {
         reason: reason.clone(),
         notes: Vec::new(),
     };
-    if let Err(error) = dispatcher.dispatch(&mut request).await {
+    match timeout(policy.drain, dispatcher.dispatch(&mut request)).await {
+        Ok(Ok(_)) => {}
         // A broken listener does not get to hold up a shutdown.
-        telemetry.record(
+        Ok(Err(error)) => telemetry.record(
             Record::new(Level::Error, LISTENER_FAILED)
                 .with("reason", named(&reason))
                 .with("error", error.to_string()),
-        );
+        ),
+        // Neither does a listener that never returns.
+        Err(_) => telemetry.record(
+            Record::new(Level::Warn, REQUEST_OVERRAN)
+                .with("reason", named(&reason))
+                .with("budget", policy.drain),
+        ),
     }
     telemetry.record(
         Record::new(Level::Info, REQUESTED)
@@ -567,7 +620,10 @@ async fn drive(kernel: Kernel) -> Outcome {
     let (components, watcher) = ShutdownController::new(policy);
     components.begin_stopping();
     let cx = ShutdownContext::new(&resolved.container, &dispatcher, &watcher);
-    let stopped = rollback(booted, &cx, policy.stop).await;
+    let RolledBack {
+        stopped,
+        failures: unstopped,
+    } = rollback(booted, &cx, policy.stop).await;
     components.finish();
 
     // Phase seven.
@@ -586,13 +642,15 @@ async fn drive(kernel: Kernel) -> Outcome {
     // seconds earlier, and a successful exit whose last line read `errors=2`
     // sent an operator hunting for a failure that had been handled.
     let failures = errors.len();
-    let outcome = outcome_of(reason, errors, still_running);
+    let refused_to_stop = unstopped.len();
+    let outcome = outcome_of(reason, errors, still_running, unstopped);
     // What nothing recovered from: the failures the outcome itself carries.
     // Zero on every successful exit, by construction.
     let unhandled = unhandled_of(&outcome);
     telemetry.record(
         Record::new(Level::Info, STOPPED)
             .with("components", count(stopped.len()))
+            .with("unstopped", count(refused_to_stop))
             .with("abandoned", count(abandoned))
             .with("unhandled", count(unhandled))
             .with("run_failures", count(failures)),
@@ -640,6 +698,7 @@ async fn settle(dispatcher: &EventDispatcher, budget: Duration, telemetry: &Arc<
 fn unhandled_of(outcome: &Outcome) -> usize {
     match outcome {
         Outcome::Failed(KernelError::Run(errors)) => errors.len(),
+        Outcome::Failed(KernelError::Shutdown(errors)) => errors.len(),
         // No other aggregate reaches phase seven, and a failure that did would
         // still be one failure rather than none.
         Outcome::Failed(_) => 1,
@@ -653,7 +712,9 @@ fn unhandled_of(outcome: &Outcome) -> usize {
 /// binding, so this reads values that already exist rather than building any.
 /// A failure is therefore a failure of the graph — but it is reported against
 /// the runnable's identity, because that is what a reader can act on.
-async fn units(resolved: &Resolved) -> Result<Vec<(RunnableId, Arc<dyn Runnable>)>, RunError> {
+async fn units(
+    resolved: &Resolved,
+) -> Result<Vec<(RunnableId, ContractId, Arc<dyn Runnable>)>, RunError> {
     let mut units = Vec::with_capacity(resolved.plan.runnables.len());
 
     for id in resolved.plan.runnables.iter().copied() {
@@ -661,7 +722,9 @@ async fn units(resolved: &Resolved) -> Result<Vec<(RunnableId, Arc<dyn Runnable>
         let unit = (entry.build)(&resolved.container)
             .await
             .map_err(|error| RunError::failed(id, Box::new(error)))?;
-        units.push((id, unit));
+        // The contract this runnable's own binding answers: what frames the
+        // container its `run` resolves through.
+        units.push((id, entry.contract, unit));
     }
 
     Ok(units)
@@ -690,7 +753,9 @@ async fn give_up(
     controller.begin_stopping();
     let watcher = controller.watcher();
     let cx = ShutdownContext::new(&resolved.container, &resolved.dispatcher, &watcher);
-    rollback(booted, &cx, policy.stop).await;
+    // The stop failures are recorded by `rollback` and go no further: this
+    // outcome is already a failure, and the start that failed is its cause.
+    let _ = rollback(booted, &cx, policy.stop).await;
     controller.finish();
 
     Outcome::Failed(KernelError::Run(vec![error]))
@@ -718,7 +783,26 @@ fn announce(
     })
 }
 
-/// What the run ended as.
+/// What the whole run ended as: phase five, then the stop it was given.
+fn outcome_of(
+    reason: ShutdownReason,
+    errors: Vec<RunError>,
+    still_running: usize,
+    unstopped: Vec<ShutdownError>,
+) -> Outcome {
+    let outcome = run_outcome(reason, errors, still_running);
+    // Section 12: a component that fails to stop never holds the walk up, and
+    // it influences the exit code. A run that already failed keeps the failure
+    // that ended it as its cause — the stop failures are on the telemetry
+    // stream either way — but a run that ended well and left a component
+    // unstopped did not end well.
+    if unstopped.is_empty() || !outcome.is_success() {
+        return outcome;
+    }
+    Outcome::Failed(KernelError::Shutdown(unstopped))
+}
+
+/// What phase five alone ended as, before the stop is taken into account.
 ///
 /// The reason decides, not the error list: an ancillary runnable that failed
 /// and was restarted is in that list, and a process that ran for a week must
@@ -741,7 +825,7 @@ fn announce(
 ///
 /// An essential runnable that ended on a failure of its own is fatal either
 /// way, and that failure is the cause the outcome carries.
-fn outcome_of(reason: ShutdownReason, errors: Vec<RunError>, still_running: usize) -> Outcome {
+fn run_outcome(reason: ShutdownReason, errors: Vec<RunError>, still_running: usize) -> Outcome {
     match reason {
         ShutdownReason::Completed => Outcome::Completed,
         ShutdownReason::Signal | ShutdownReason::Programmatic => Outcome::ShutdownRequested,

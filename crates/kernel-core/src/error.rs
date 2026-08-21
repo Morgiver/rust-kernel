@@ -588,6 +588,19 @@ pub enum ResolveError {
         /// The unknown bundle it names.
         after: &'static str,
     },
+    /// A bundle is registered before a bundle it declares itself after.
+    ///
+    /// Registration order is what the builder honours, so an ordering
+    /// constraint is met by registering in the order it states. A constraint
+    /// that names a bundle registered later is not a preference the kernel can
+    /// satisfy by reordering: the registrations are what the assembly wrote,
+    /// and the manifest disagrees with them.
+    BundleOutOfOrder {
+        /// The bundle stating the constraint.
+        bundle: &'static str,
+        /// The bundle it names, registered after it.
+        after: &'static str,
+    },
     /// Two bundles registered under one name.
     ///
     /// The name is what an ordering constraint targets and what every other
@@ -690,6 +703,10 @@ impl fmt::Display for ResolveError {
             Self::UnknownBundleOrder { bundle, after } => write!(
                 f,
                 "bundle `{bundle}` must come after unknown bundle `{after}`"
+            ),
+            Self::BundleOutOfOrder { bundle, after } => write!(
+                f,
+                "bundle `{bundle}` is registered before `{after}`, which it must come after"
             ),
             Self::DuplicateBundle { name } => {
                 write!(f, "duplicate bundle `{name}`: registered more than once")

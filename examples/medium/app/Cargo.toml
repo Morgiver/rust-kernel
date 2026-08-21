@@ -13,7 +13,9 @@ kernel-core = { workspace = true }
 ledger-bundle = { path = "../ledger-bundle" }
 orders-bundle = { path = "../orders-bundle" }
 audit-bundle = { path = "../audit-bundle" }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time"] }
+# No `macros`: `main` builds its runtime by hand so that it can bound the
+# teardown, which `#[tokio::main]` does not. The tests keep it, below.
+tokio = { workspace = true, features = ["rt-multi-thread", "signal", "time"] }
 
 [dev-dependencies]
 kernel-testkit = { workspace = true }

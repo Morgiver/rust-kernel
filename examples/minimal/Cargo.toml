@@ -9,11 +9,17 @@ publish = false
 
 [dependencies]
 kernel = { workspace = true }
-# The runtime `main` awaits the kernel on, and the signal handling the kernel
-# installs. No `time`: the feed's periodic wait is
-# `Shutdown::sleep_until_draining`, which the kernel publishes, so nothing here
-# names a timer.
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+# The runtime `main` builds and awaits the kernel on, and the signal handling
+# the kernel installs. No `macros`: `main` builds its runtime by hand so that
+# it can bound the teardown, which `#[tokio::main]` does not. No `time` either:
+# the feed's periodic wait is `Shutdown::sleep_until_draining`, which the kernel
+# publishes, so nothing here names a timer.
+tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
+
+[dev-dependencies]
+# `macros` is a test dependency alone: the only `#[tokio::test]` in this crate
+# is the one `orders` uses to drive its feed.
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
 workspace = true

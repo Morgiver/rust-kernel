@@ -460,8 +460,8 @@ async fn component_stop_survives_burnt_runnable_budget() {
 
 /// The other half of the same ruling: a component whose `shutdown` never
 /// returns is still cut at the deadline of the component phase. The run ends,
-/// the overrun is recorded against the declared name, and the component's own
-/// note is never written.
+/// the overrun is recorded against the declared name, the component's own note
+/// is never written, and the exit status carries the unit that refused.
 #[tokio::test]
 async fn deaf_component_is_still_cut() {
     let journal = Journal::default();
@@ -487,7 +487,15 @@ async fn deaf_component_is_still_cut() {
     .expect("a component that never returns must not hang the kernel");
     let elapsed = started.elapsed();
 
-    assert!(matches!(outcome, Outcome::ShutdownRequested), "{outcome:?}");
+    // Cut, not waited for — and the component that did not stop is on the exit
+    // status, not only in the log.
+    match &outcome {
+        Outcome::Failed(KernelError::Shutdown(errors)) => {
+            assert_eq!(errors.len(), 1);
+            assert_eq!(errors[0].unit(), "wire-pool");
+        }
+        other => panic!("expected a shutdown failure, got {other:?}"),
+    }
     assert!(
         !journal.saw("stop wire-pool"),
         "the call was cut, so it noted nothing"

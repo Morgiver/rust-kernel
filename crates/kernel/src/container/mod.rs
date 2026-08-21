@@ -39,6 +39,25 @@
 //! running, and panics if that provider resolves a contract it did not declare.
 //! Release builds carry none of that. The guard is what turns a convention into
 //! a checked fact.
+//!
+//! The same frame covers the two other places a resolution starts: the
+//! container a component is handed while it boots and the one a runnable is
+//! handed while it runs. Both are registered through a `Provider<T>` that
+//! already carries a `requires`, so this is the one declaration read three
+//! times rather than a second channel.
+//!
+//! # What the guard does not cover
+//!
+//! It is a debug guard over the resolutions it sees, and not a proof:
+//!
+//! * A resolution that only happens on some inputs is only checked on the runs
+//!   that take that branch. The guard observes calls; it does not read code.
+//! * A scope opened with [`scope`](Container::scope) carries no frame. A unit
+//!   of work resolves `Scoped` bindings, and a `Shared` unit cannot declare a
+//!   `Scoped` requirement: phase three refuses that pair as a
+//!   `LifetimeConflict`. Requiring the declaration anyway would make the one
+//!   correct way to use a scope unrepresentable.
+//! * Release builds carry no frame at all.
 
 pub(crate) mod erased;
 
@@ -290,6 +309,11 @@ impl Container {
     /// Called on a container that is already a scope, this returns *that same*
     /// scope rather than a silent sibling: a unit of work opened inside a unit
     /// of work is the same unit of work. Scopes do not nest.
+    ///
+    /// A new scope carries no debug frame. What a unit of work resolves is
+    /// `Scoped`, and a caller that is not itself `Scoped` cannot declare a
+    /// `Scoped` requirement — phase three refuses that as a `LifetimeConflict`
+    /// — so there is no declaration for the guard to check against here.
     #[must_use]
     pub fn scope(&self) -> Scope {
         if self.scope.is_some() {
@@ -306,7 +330,7 @@ impl Container {
                 })),
                 extensions: Arc::clone(&self.extensions),
                 #[cfg(debug_assertions)]
-                frame: self.frame.clone(),
+                frame: None,
             },
         }
     }
@@ -473,14 +497,64 @@ impl Container {
         self.clone()
     }
 
-    /// Panics if a provider resolves a contract it never declared.
+    /// The same container, framed by what the unit bound to `contract`
+    /// declared.
+    ///
+    /// A component and a runnable are each registered through a `Provider<T>`
+    /// that carries a `requires`, and each is a binding in this very table, so
+    /// the declaration the guard checks a boot or a run against is the one it
+    /// already checks that unit's own build against. Nothing new is declared
+    /// here; one declaration is read at a third moment.
+    ///
+    /// A contract no binding answers leaves the container unframed rather than
+    /// panicking: a container assembled by hand — a test double, a detached
+    /// context — has no table to read a declaration from, and refusing to run
+    /// there would make the guard a constraint on test fixtures.
+    #[must_use]
+    #[cfg(debug_assertions)]
+    pub(crate) fn for_unit(&self, contract: ContractId) -> Self {
+        let Some(entry) = self
+            .shared
+            .bindings
+            .by_id
+            .get(&contract)
+            .map(|index| &self.shared.bindings.entries[*index])
+        else {
+            return self.clone();
+        };
+
+        Self {
+            shared: Arc::clone(&self.shared),
+            scope: self.scope.clone(),
+            extensions: Arc::clone(&self.extensions),
+            frame: Some(Arc::new(Frame {
+                contract: entry.contract,
+                declared: entry.requires.iter().map(ContractRef::id).collect(),
+            })),
+        }
+    }
+
+    #[must_use]
+    #[cfg(not(debug_assertions))]
+    pub(crate) fn for_unit(&self, _contract: ContractId) -> Self {
+        self.clone()
+    }
+
+    /// Panics if a provider or a unit resolves a contract it never declared.
+    ///
+    /// It checks the resolutions it is asked to perform, which is not the same
+    /// as checking the code that performs them: a resolution reached on one
+    /// branch and not another is caught only on the runs that take it, a new
+    /// scope carries no frame, and a release build carries none either. It
+    /// catches a declaration that is wrong on the paths a run exercises; it
+    /// does not prove one complete.
     #[cfg(debug_assertions)]
     fn guard(&self, wanted: ContractRef) {
         if let Some(frame) = &self.frame
             && !frame.declared.contains(&wanted.id())
         {
             panic!(
-                "provider for `{}` resolved `{}`, which it did not declare in `requires`",
+                "`{}` resolved `{}`, which it did not declare in `requires`",
                 frame.contract, wanted
             );
         }
@@ -893,6 +967,83 @@ mod tests {
             .build();
 
         let _ = container.get::<dyn Sink>().await;
+    }
+
+    // The same frame, taken by identity rather than by a build: this is what
+    // covers a component's `boot` and a runnable's `run`.
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    #[should_panic(expected = "did not declare in `requires`")]
+    async fn unit_frame_refuses_undeclared() {
+        let container = Fixture::new()
+            .bind(ContractRef::of::<dyn Sink>(), Lifetime::Shared, vec![], {
+                let build: BuildFn<dyn Sink> =
+                    Box::new(|_| Box::pin(async { Ok(Arc::new(Plain(0)) as Arc<dyn Sink>) }));
+                build
+            })
+            .bind(
+                ContractRef::of::<dyn Surface>(),
+                Lifetime::Shared,
+                vec![],
+                surface(1),
+            )
+            .build();
+
+        let unit = container.for_unit(ContractRef::of::<dyn Sink>().id());
+
+        let _ = unit.get::<dyn Surface>().await;
+    }
+
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    async fn unit_frame_allows_declared() {
+        let container = Fixture::new()
+            .bind(
+                ContractRef::of::<dyn Sink>(),
+                Lifetime::Shared,
+                vec![ContractRef::of::<dyn Surface>()],
+                {
+                    let build: BuildFn<dyn Sink> =
+                        Box::new(|_| Box::pin(async { Ok(Arc::new(Plain(0)) as Arc<dyn Sink>) }));
+                    build
+                },
+            )
+            .bind(
+                ContractRef::of::<dyn Surface>(),
+                Lifetime::Shared,
+                vec![],
+                surface(6),
+            )
+            .build();
+
+        let unit = container.for_unit(ContractRef::of::<dyn Sink>().id());
+
+        assert!(unit.get::<dyn Surface>().await.is_ok());
+    }
+
+    // A unit of work resolves what no `Shared` caller may declare, so a new
+    // scope carries no frame. Stated here so that removing it is a decision.
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    async fn scope_carries_no_frame() {
+        let container = Fixture::new()
+            .bind(ContractRef::of::<dyn Sink>(), Lifetime::Shared, vec![], {
+                let build: BuildFn<dyn Sink> =
+                    Box::new(|_| Box::pin(async { Ok(Arc::new(Plain(0)) as Arc<dyn Sink>) }));
+                build
+            })
+            .bind(
+                ContractRef::of::<dyn Surface>(),
+                Lifetime::Scoped,
+                vec![],
+                surface(2),
+            )
+            .build();
+
+        let unit = container.for_unit(ContractRef::of::<dyn Sink>().id());
+        let scope = unit.scope();
+
+        assert!(scope.container().get::<dyn Surface>().await.is_ok());
     }
 
     #[cfg(debug_assertions)]

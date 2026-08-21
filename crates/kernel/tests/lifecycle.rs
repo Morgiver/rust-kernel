@@ -108,6 +108,8 @@ struct Part {
     on_boot: OnBoot,
     /// How long `shutdown` awaits before it notes anything.
     on_stop: Option<Duration>,
+    /// Whether `shutdown` answers with a failure of its own.
+    refuses_stop: bool,
 }
 
 impl Part {
@@ -118,6 +120,7 @@ impl Part {
             journal: journal.clone(),
             on_boot: OnBoot::Ready,
             on_stop: None,
+            refuses_stop: false,
         }
     }
 
@@ -128,7 +131,14 @@ impl Part {
             journal: journal.clone(),
             on_boot: OnBoot::Refuse,
             on_stop: None,
+            refuses_stop: false,
         }
+    }
+
+    /// A component that boots, stays up, and then fails to stop.
+    fn refusing_stop(mut self) -> Self {
+        self.refuses_stop = true;
+        self
     }
 
     /// A component whose `shutdown` really awaits, which is what a zero budget
@@ -154,11 +164,18 @@ impl Part {
     ///
     /// The note comes last on purpose: a call dropped at its deadline leaves no
     /// entry at all, so the journal reports completion rather than arrival.
-    async fn stop(&self) {
+    async fn stop(&self) -> Result<(), ComponentError> {
         if let Some(delay) = self.on_stop {
             tokio::time::sleep(delay).await;
         }
         self.journal.note(format!("stop {}", self.label));
+        if self.refuses_stop {
+            return Err(ComponentError::new(
+                ComponentId::new(self.label, 0),
+                "refused to stop".to_owned().into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -189,10 +206,7 @@ macro_rules! components {
                 &'a self,
                 _cx: &'a ShutdownContext<'a>,
             ) -> BoxFuture<'a, Result<(), ComponentError>> {
-                Box::pin(async move {
-                    self.0.stop().await;
-                    Ok(())
-                })
+                Box::pin(self.0.stop())
             }
         }
     )+};
@@ -398,6 +412,19 @@ impl Listener<ShutdownRequested> for Witness {
     }
 }
 
+/// Hears the shutdown request and never answers.
+struct Deaf;
+
+impl Listener<ShutdownRequested> for Deaf {
+    fn on_event<'a>(
+        &'a self,
+        _event: &'a mut ShutdownRequested,
+        _cx: &'a ListenerContext<'a>,
+    ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+        Box::pin(pending())
+    }
+}
+
 // --------------------------------------------------------------------------
 // Assembly
 // --------------------------------------------------------------------------
@@ -579,6 +606,78 @@ async fn batch_run_completes() {
 }
 
 /// An ancillary runnable that fails is restarted, and the kernel it failed
+/// The container a runnable resolves through is framed by that runnable's own
+/// `requires`.
+///
+/// Undeclared, the resolution panics in debug builds and the panic ends that
+/// runnable's task — which is what the supervisor reports. Declared, it is the
+/// ordinary resolution `unreached_binding_is_built` pins.
+#[cfg(debug_assertions)]
+#[tokio::test(start_paused = true)]
+async fn run_guard_refuses_undeclared() {
+    let journal = Journal::default();
+    let sink = RecordingTelemetry::new();
+    let bundle = {
+        let journal = journal.clone();
+        assembly("greedy", move |registry| {
+            registry.provide(Provider::from_value(Arc::new(Plain) as Arc<dyn Surface>));
+            // No `requires`, and `Work::Reach` resolves `Surface` all the same.
+            registry.runnable(Provider::from_value(Arc::new(Reacher(Job::new(
+                ancillary(),
+                &journal,
+                Work::Reach,
+            )))));
+            registry.runnable(Provider::from_value(Arc::new(Caller(Job::new(
+                ancillary(),
+                &journal,
+                Work::Request,
+            )))));
+        })
+    };
+
+    let _ = built(&sink, bundle).await.run().await;
+
+    assert!(sink.contains("runnable.failed"));
+    assert!(!journal.saw("surface reached"));
+}
+
+/// Section 12: a component that fails to stop influences the exit code.
+///
+/// Nothing else went wrong — the run was asked to stop and it stopped — so
+/// without this the process exits zero while a component is still holding
+/// whatever it was told to release.
+#[tokio::test(start_paused = true)]
+async fn failed_stop_reaches_outcome() {
+    let journal = Journal::default();
+    let sink = RecordingTelemetry::new();
+    let bundle = {
+        let journal = journal.clone();
+        assembly("stubborn", move |registry| {
+            registry.component(Provider::from_value(Arc::new(First(
+                Part::ready("first", &journal).refusing_stop(),
+            ))));
+            registry.runnable(Provider::from_value(Arc::new(Caller(Job::new(
+                ancillary(),
+                &journal,
+                Work::Request,
+            )))));
+        })
+    };
+
+    let outcome = built(&sink, bundle).await.run().await;
+
+    assert!(!outcome.is_success(), "{outcome:?}");
+    match outcome.error() {
+        Some(KernelError::Shutdown(errors)) => {
+            assert_eq!(errors.len(), 1);
+            assert_eq!(errors[0].unit(), "first");
+            assert!(errors[0].to_string().contains("refused to stop"));
+        }
+        other => panic!("expected a shutdown failure, got {other:?}"),
+    }
+    assert!(journal.saw("stop first"));
+}
+
 /// inside of is still there to stop later: the outcome is the stop that was
 /// asked for, not the failure that was recovered from.
 #[tokio::test(start_paused = true)]
@@ -702,11 +801,16 @@ async fn unreached_binding_is_built() {
             registry.component(Provider::from_value(Arc::new(First(Part::ready(
                 "first", &journal,
             )))));
-            registry.runnable(Provider::from_value(Arc::new(Reacher(Job::new(
-                ancillary(),
-                &journal,
-                Work::Reach,
-            )))));
+            // Declared because it is resolved from `run`, not only from a
+            // build: the debug guard reads the same `requires` at both moments.
+            registry.runnable(
+                Provider::from_value(Arc::new(Reacher(Job::new(
+                    ancillary(),
+                    &journal,
+                    Work::Reach,
+                ))))
+                .requires([ContractRef::of::<dyn Surface>()]),
+            );
         })
     };
 
@@ -846,6 +950,45 @@ async fn component_gets_own_budget() {
     assert!(elapsed >= BUDGET.total() + unhurried, "{elapsed:?}");
     // And it ran to the end rather than being dropped at a deadline of zero.
     assert!(journal.saw("stop first"));
+}
+
+/// Section 13: the kernel never blocks indefinitely, the shutdown request
+/// included.
+///
+/// The dispatch of [`ShutdownRequested`] is awaited, so a listener that never
+/// returns would hold the whole process on the one rung nothing else bounds.
+/// It is cut at the drain budget, the overrun is recorded, and the ladder goes
+/// on down.
+#[tokio::test(start_paused = true)]
+async fn deaf_request_listener_is_cut() {
+    let journal = Journal::default();
+    let sink = RecordingTelemetry::new();
+    let bundle = {
+        let journal = journal.clone();
+        assembly("unanswered", move |registry| {
+            registry.listen(Deaf, Priority::HIGH);
+            registry.component(Provider::from_value(Arc::new(First(Part::ready(
+                "first", &journal,
+            )))));
+            registry.runnable(Provider::from_value(Arc::new(Caller(Job::new(
+                ancillary(),
+                &journal,
+                Work::Request,
+            )))));
+        })
+    };
+
+    // The outer bound is what turns an unbounded rung into a failed test
+    // rather than a hung one.
+    let outcome = tokio::time::timeout(Duration::from_secs(60), built(&sink, bundle).await.run())
+        .await
+        .expect("a deaf request listener must not hold the kernel");
+
+    assert!(matches!(outcome, Outcome::ShutdownRequested), "{outcome:?}");
+    assert!(sink.contains("kernel.request_overran"));
+    // The rungs below the request were still walked.
+    assert!(journal.saw("stop first"));
+    assert!(sink.contains("kernel.stopped"));
 }
 
 /// The shutdown request reaches its listeners before the ladder moves, and the
