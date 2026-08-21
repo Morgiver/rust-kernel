@@ -511,7 +511,7 @@ impl Registry {
     }
 
     /// A handle on the binding just recorded.
-    fn last_binding<C: ?Sized + 'static>(&mut self) -> Binding<'_, C> {
+    fn last_binding<C: ?Sized + Send + Sync + 'static>(&mut self) -> Binding<'_, C> {
         let entry = self
             .bindings
             .last_mut()
@@ -926,7 +926,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unit_failure_names_the_unit() {
+    async fn unit_failure_names_unit() {
         let mut registry = registry();
         registry.component::<Unit>(Provider::from_fn(|_container| {
             Box::pin(async { Err(BuildError::new("unit", "deliberate".to_owned().into())) })
@@ -1017,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn config_absent_option_is_none() {
+    fn absent_config_is_none() {
         assert_eq!(
             configured().config::<Option<i64>>("absent").expect("read"),
             None

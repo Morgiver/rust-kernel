@@ -168,7 +168,7 @@ mod tests {
     // Erasing the *stored* type rather than the contract is exactly the bug
     // this module exists to prevent: it must not be mistakable for a success.
     #[test]
-    fn inner_type_is_not_reachable() {
+    fn inner_type_unreachable() {
         let value: Arc<dyn Surface> = Arc::new(Plain(7));
         let erased = erase(value);
 
@@ -176,7 +176,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn erased_build_keeps_the_vtable() {
+    async fn erased_build_keeps_vtable() {
         let build: BuildFn<dyn Surface> =
             Box::new(|_container| Box::pin(async { Ok(Arc::new(Plain(3)) as Arc<dyn Surface>) }));
         let erased_build = erase_build(build);

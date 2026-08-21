@@ -13,7 +13,8 @@
 //!   table, shared for the life of the process.
 //! * [`Lifetime::Scoped`] — built at most once per [`Scope`], kept in that
 //!   scope's table. Resolved outside a scope there is no unit of work to attach
-//!   the value to, so it behaves like `Factory`.
+//!   the value to, so the resolution fails with
+//!   [`ContainerError::NoScope`].
 //! * [`Lifetime::Factory`] — built on every resolution; the caller owns the
 //!   result.
 //!
@@ -348,10 +349,9 @@ impl Container {
                         .await?;
                     restore(value, entry.contract)
                 }
-                None => {
-                    let value = self.build(entry).await?;
-                    restore(&value, entry.contract)
-                }
+                None => Err(ContainerError::NoScope {
+                    contract: entry.contract,
+                }),
             },
             Lifetime::Factory => {
                 let value = self.build(entry).await?;
@@ -840,7 +840,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn nested_scope_is_same_unit() {
+    async fn nested_scope_same_unit() {
         let container = Fixture::new()
             .bind(
                 ContractRef::of::<dyn Surface>(),
@@ -862,8 +862,10 @@ mod tests {
         assert!(Arc::ptr_eq(&a, &c));
     }
 
+    // Load-bearing rule: a scoped binding has nowhere to live outside a scope,
+    // so it is refused rather than quietly rebuilt per call.
     #[tokio::test]
-    async fn scoped_without_scope_builds_each_time() {
+    async fn scoped_needs_a_scope() {
         let counter = Arc::new(AtomicUsize::new(0));
         let container = Fixture::new()
             .bind(
@@ -874,11 +876,11 @@ mod tests {
             )
             .build();
 
-        let a = container.get::<dyn Surface>().await.expect("built");
-        let b = container.get::<dyn Surface>().await.expect("built");
-
-        assert!(!Arc::ptr_eq(&a, &b));
-        assert_eq!(counter.load(Ordering::SeqCst), 2);
+        assert!(matches!(
+            container.get::<dyn Surface>().await,
+            Err(ContainerError::NoScope { .. })
+        ));
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -901,7 +903,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_build_can_be_retried() {
+    async fn failed_build_retries() {
         let counter = Arc::new(AtomicUsize::new(0));
         let attempts = Arc::clone(&counter);
         let build: BuildFn<dyn Surface> = Box::new(move |_container| {

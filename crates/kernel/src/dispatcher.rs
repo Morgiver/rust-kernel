@@ -346,18 +346,22 @@ impl EventDispatcher {
     /// notification that stops halfway because one subscriber is broken is
     /// worse than one that does not.
     ///
+    /// An event nobody listens for is silent: there is nothing to spawn, and
+    /// that is checked before anything else so the same non-event never reports
+    /// two different ways.
+    ///
     /// With no runtime to spawn on — a synchronous caller, a dispatcher built
     /// outside the application's runtime — the event is recorded at error level
     /// and dropped. It does not panic: an emission is a notification, and
     /// taking a process down because a notification had nowhere to go is not a
     /// trade the kernel makes.
     pub fn emit<E: Event>(&self, event: E) {
-        let Some(runtime) = self.runtime.clone() else {
-            self.drop_event::<E>("no_runtime");
+        let Some(slots) = self.table.get(&TypeId::of::<E>()).cloned() else {
             return;
         };
 
-        let Some(slots) = self.table.get(&TypeId::of::<E>()).cloned() else {
+        let Some(runtime) = self.runtime.clone() else {
+            self.drop_event::<E>("no_runtime");
             return;
         };
 
@@ -686,7 +690,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unheard_event_is_not_an_error() {
+    async fn unheard_dispatch_succeeds() {
         let dispatcher = attached(Vec::new());
 
         let mut event = alpha();
@@ -697,7 +701,7 @@ mod tests {
 
     // Two event types sharing one NAME must not reach each other's listeners.
     #[tokio::test]
-    async fn routes_by_type_not_name() {
+    async fn routes_by_type_id() {
         struct Silent;
 
         impl Listener<Beta> for Silent {
@@ -859,7 +863,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn emit_failure_goes_to_telemetry() {
+    async fn emit_failure_reaches_telemetry() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let telemetry = Arc::new(RecordingTelemetry::new());
         let dispatcher = EventDispatcher::new(
@@ -886,8 +890,40 @@ mod tests {
         assert!(telemetry.contains(FAILED));
     }
 
+    // Unreachable through the dispatcher, whose table is keyed by `TypeId`, so
+    // the erased closure is invoked directly: the arm reports a defect in the
+    // erasure layer and that report is what is pinned here.
     #[tokio::test]
-    async fn emit_unheard_event_is_silent() {
+    async fn erased_rejects_wrong_payload() {
+        let call = erase_listener::<Alpha, _>(Marker::new("never"));
+        let container = container();
+        let cx = ListenerContext::new(&container);
+        let mut other = Beta;
+        let erased: &mut (dyn Any + Send) = &mut other;
+
+        let error = call(erased, &cx)
+            .await
+            .expect_err("payload of another type");
+
+        assert_eq!(error.event(), Alpha::NAME);
+        assert!(error.cause().to_string().contains("another type"));
+    }
+
+    #[tokio::test]
+    async fn unheard_emit_is_silent() {
+        let telemetry = Arc::new(RecordingTelemetry::new());
+        let dispatcher = EventDispatcher::new(Vec::new(), telemetry.clone());
+        dispatcher.attach(container());
+
+        dispatcher.emit(alpha());
+
+        assert!(telemetry.is_empty());
+    }
+
+    // The other half of the same no-op: without a runtime an unheard event is
+    // still silent, so one non-event does not report two different ways.
+    #[test]
+    fn unheard_emit_without_runtime() {
         let telemetry = Arc::new(RecordingTelemetry::new());
         let dispatcher = EventDispatcher::new(Vec::new(), telemetry.clone());
         dispatcher.attach(container());

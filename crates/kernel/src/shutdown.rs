@@ -149,12 +149,6 @@ impl Shutdown {
         self.stage().is_shutting_down()
     }
 
-    /// The budgets this ladder was built with.
-    #[must_use]
-    pub fn policy(&self) -> ShutdownPolicy {
-        self.ladder.policy
-    }
-
     /// The instant the current stage must end by.
     ///
     /// `None` while [`Stage::Running`], and `None` again once
@@ -415,7 +409,6 @@ mod tests {
         assert_eq!(first.stage(), Stage::Draining);
         assert_eq!(second.stage(), Stage::Draining);
         assert_eq!(third.stage(), Stage::Draining);
-        assert_eq!(second.policy(), policy());
     }
 
     #[tokio::test]

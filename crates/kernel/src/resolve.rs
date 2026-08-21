@@ -1117,6 +1117,24 @@ mod tests {
         );
     }
 
+    // Neither claimant is unnamed, so neither names the position better than
+    // the other: the earlier claim in registration order is reported.
+    #[test]
+    fn named_claimants_report_first() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        let _ = registry.provide_named("primary", alpha()).as_default();
+        registry.enter_bundle("two");
+        let _ = registry.provide_named("secondary", alpha()).as_default();
+
+        let errors = resolve(registry, &[]).expect_err("both claim the default position");
+
+        assert_eq!(kinds(&errors), ["default"]);
+        let rendered = rendered(&errors);
+        assert!(rendered[0].contains("#primary"), "{rendered:?}");
+        assert!(!rendered[0].contains("#secondary"), "{rendered:?}");
+    }
+
     #[test]
     fn three_defaults_report_twice() {
         let mut registry = registry();

@@ -700,6 +700,16 @@ pub enum ContainerError {
         /// The contract whose first instantiation was refused.
         contract: ContractRef,
     },
+    /// A scoped binding was resolved from a container that owns no unit of
+    /// work.
+    ///
+    /// A scoped value has nowhere to live outside a scope. Building one per
+    /// call instead would answer a request the caller never made, so the
+    /// resolution is refused.
+    NoScope {
+        /// The contract that was asked for.
+        contract: ContractRef,
+    },
     /// The provider ran and failed.
     Build(BuildError),
 }
@@ -719,6 +729,11 @@ impl fmt::Display for ContainerError {
                 write!(f, "refusing to build ")?;
                 write_contract(f, contract)?;
                 f.write_str(" after boot: lazy resolution is forbidden")
+            }
+            Self::NoScope { contract } => {
+                write!(f, "refusing to build ")?;
+                write_contract(f, contract)?;
+                f.write_str(" outside a scope: it is bound per unit of work")
             }
             Self::Build(error) => write!(f, "{error}"),
         }

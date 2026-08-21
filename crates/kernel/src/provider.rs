@@ -177,12 +177,12 @@ impl<C: ?Sized + Send + Sync + 'static> fmt::Debug for Provider<C> {
 /// The borrow ties the handle to the registry that produced it, so a binding
 /// can only be adjusted before the next registration happens — there is no way
 /// to keep one around and reach back into a registry that has moved on.
-pub struct Binding<'r, C: ?Sized + 'static> {
+pub struct Binding<'r, C: ?Sized + Send + Sync + 'static> {
     is_default: &'r mut bool,
     contract: PhantomData<fn() -> Arc<C>>,
 }
 
-impl<'r, C: ?Sized + 'static> Binding<'r, C> {
+impl<'r, C: ?Sized + Send + Sync + 'static> Binding<'r, C> {
     /// Wraps the recorded entry's default flag.
     ///
     /// Registration verbs call this; nothing else can build a `Binding`.
@@ -205,7 +205,7 @@ impl<'r, C: ?Sized + 'static> Binding<'r, C> {
     }
 }
 
-impl<C: ?Sized + 'static> fmt::Debug for Binding<'_, C> {
+impl<C: ?Sized + Send + Sync + 'static> fmt::Debug for Binding<'_, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Binding")
             .field("is_default", &*self.is_default)
