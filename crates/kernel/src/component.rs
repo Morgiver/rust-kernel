@@ -167,7 +167,14 @@ pub trait Component: Send + Sync + 'static {
     /// # What the context reports
     ///
     /// [`ShutdownContext::shutdown`] is on
-    /// [`Stage::Draining`](kernel_core::Stage::Draining), and
+    /// [`Stage::Draining`](kernel_core::Stage::Draining) for the WHOLE of the
+    /// call, not merely at the instant of it: the ladder does not climb to
+    /// [`Stopping`](kernel_core::Stage::Stopping) until every drain has
+    /// returned or been cut, and until every runnable has wound down. A drain
+    /// that outlives the last runnable still reads its own rung, so a
+    /// component may race its work against `cx.shutdown().stopping()` and know
+    /// that firing means its own drain was cut.
+    ///
     /// [`ShutdownContext::deadline`] is the instant this component's own drain
     /// is cut at.
     fn drain<'a>(

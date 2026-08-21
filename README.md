@@ -23,7 +23,9 @@ it provides and what it needs. The kernel then:
 - starts the *runnables* and supervises them, with a criticality and a restart
   policy per task;
 - stops everything in two stages, in the reverse of the boot order that was
-  actually observed, under a bounded budget;
+  actually observed, under a bounded budget: on the first stage every component
+  is told to refuse new work (`Component::drain`) while the runnables wind down
+  beside it, and the stage is held open until both halves are done or cut;
 - returns an `Outcome` to your `main`.
 
 It is a `Future`. Your application keeps its `main`, chooses its runtime and
@@ -56,7 +58,7 @@ Configure → Register → Resolve → Boot → Run → Shutdown → Terminated
 | 3 | Resolve | sync | The graph is validated — contracts satisfied, no cycle, topological order computed | the kernel is never built |
 | 4 | Boot | async | Components are instantiated and booted in topological order | rollback, then exit |
 | 5 | Run | async | The supervisor starts the runnables and watches them | depends on criticality |
-| 6 | Shutdown | async | Two stages — `Draining`, then `Stopping` — in reverse of the observed boot order | logged, reflected in the exit code |
+| 6 | Shutdown | async | Two stages — `Draining`, then `Stopping` — in reverse of the observed boot order. `Component::drain` and the runnables' wind-down share the first one | logged, reflected in the exit code |
 | 7 | Terminated | — | An `Outcome` is returned to `main` | — |
 
 ### The rule that makes them worth something
@@ -65,7 +67,10 @@ Configure → Register → Resolve → Boot → Run → Shutdown → Terminated
 > deferred to run time.**
 
 `build()` is the barrier. If it returns `Ok`, the configuration is valid, every
-contract is satisfied and the graph is sound — and nothing has run yet. After
+contract is satisfied and the graph is sound — and nothing has run yet. What a
+unit resolves per unit of work counts as part of the graph: it declares it in
+`Provider::requires_scoped`, and phase three checks those contracts are bound
+`Scoped` (`ScopeMismatch`) exactly as it checks the rest. After
 boot, the container is *sealed*: a first shared instantiation attempted during
 `Run` is an error, not a lazy convenience. A resolution that would have failed on
 the first request in production is a design defect, not an operational one.
@@ -159,8 +164,12 @@ async fn run() -> ExitCode {
 }
 ```
 
-A fuller assembly lives in [`examples/minimal`](examples/minimal). It is the one
-place in this repository where domain vocabulary is allowed.
+Three fuller assemblies live under [`examples/`](examples): `minimal` (one
+binary, two features in one crate), `medium` (three features over seven crates
+plus the application, each feature bootable alone) and `hard` (two features over
+five crates plus the application, serving a real socket, where the drain window
+is read from outside the process). They are the one place in this repository
+where domain vocabulary is allowed.
 
 ---
 
@@ -187,9 +196,12 @@ leaves seven: `tokio`, `pin-project-lite`, `tokio-macros`, `proc-macro2`,
 `ci/check-dependencies.sh` enforces the direct column as an allowlist, and
 checks `kernel-core` transitively: it must resolve to itself alone.
 
-The split exists so that a `*-contracts` crate depends on `kernel-core` alone —
-light, stable, buildable without a runtime. That is what makes the isolation rule
-practical: **a `*-bundle` crate never depends on another `*-bundle` crate.**
+The split exists so that a `*-contracts` crate can depend on `kernel-core` alone
+— light, stable, buildable without a runtime — which is the default and what all
+five contracts crates in `examples/` do. One whose signatures must pass a unit of
+work names `Scope` and depends on `kernel` instead, paying exactly that
+lightness; nothing guards that edge. What is guarded is the isolation rule:
+**a `*-bundle` crate never depends on another `*-bundle` crate.**
 
 No macro is ever required. Every macro expands to a public API you could have
 written by hand, and CI builds and tests the whole suite with the macros crate
@@ -220,7 +232,7 @@ and there is nothing to execute that reports them green:
 
 | Boundary | Held by |
 |---|---|
-| A bundle's `requires` matches what it actually resolves | container instrumentation, panics in `debug_assertions` builds |
+| A bundle's `requires` matches what it actually resolves, and its `requires_scoped` matches what it resolves inside a scope | container instrumentation, panics in `debug_assertions` builds |
 | No lazy resolution during `Run` | `Container::seal` — a late first shared instantiation is `ContainerError::Sealed` |
 
 `missing_docs = "deny"` sits in both halves: `ci/check-lints.sh` verifies the
@@ -260,17 +272,20 @@ if you want to run `cargo deny --all-features check --deny warnings` locally.
 Verified against the current tree, not remembered:
 
 - **Four crates**, phases one to seven implemented.
-- **599 tests pass** on `cargo test --workspace`: 525 unit and integration, 74
-  doctests, plus two doctests ignored on purpose. Per binary — `kernel` 279
-  unit, 7 (`audit`), 11 (`lifecycle`); `kernel-core` 103 unit and no
-  integration target; `kernel-macros` 14 (`from_config`), 4 (`listener`), 12
-  (`provider`), 2 (`surface`); `kernel-testkit` 5 (`doubles`), 11 (`harness`),
-  5 (`missing`), 11 (`substitution`); `minimal` 1; the medium example — `app` 6
-  unit, 7 (`isolation`), 5 (`standalone`), `ledger-component` 15,
-  `ledger-contracts` 3, `ledger-bundle` 1, `orders-contracts` 3,
-  `orders-bundle` 8, `audit-contracts` 3, `audit-bundle` 9. Doctests: `kernel`
-  24, `kernel-core` 36, `kernel-macros` 4, `kernel-testkit` 1, and 9 across the
-  example crates.
+- **793 tests pass** on `cargo test --workspace`: 685 unit and integration, 108
+  doctests, plus two doctests ignored on purpose. Per package — `kernel` 351
+  unit, 7 (`audit`), 1 (`exit`), 19 (`lifecycle`), 1 (`window`); `kernel-core`
+  115 unit and no integration target; `kernel-macros` 14 (`from_config`), 4
+  (`listener`), 12 (`provider`), 2 (`surface`); `kernel-testkit` 8 unit, 5
+  (`doubles`), 14 (`harness`), 5 (`missing`), 12 (`substitution`); `minimal` 1
+  unit and 1 (`exit`); the medium example 61 — `app` 6 unit, 1 (`exit`), 7
+  (`isolation`), 5 (`standalone`), `ledger-component` 15, `ledger-contracts` 3,
+  `ledger-bundle` 1, `orders-contracts` 3, `orders-bundle` 8, `audit-contracts`
+  3, `audit-bundle` 9; the hard example 52 — `service` 8 unit and 7
+  (`serving`), `gateway-component` 10, `gateway-contracts` 4, `gateway-bundle`
+  5, `worker-contracts` 4, `worker-bundle` 14. Doctests: `kernel` 38,
+  `kernel-core` 39, `kernel-macros` 4, `kernel-testkit` 4, 9 across the medium
+  example and 14 across the hard one.
 - **Seven guards run green**, all executable scripts under `ci/`. Two further
   boundaries — `requires` conformance and the sealed container — are held by the
   code and have nothing to run; see [Guards](#guards).

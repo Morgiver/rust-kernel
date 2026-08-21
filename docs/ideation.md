@@ -130,11 +130,16 @@ du graphe, donc rien ne s'y découvre.
 
 **Les déclarations, gardées en debug.** En `debug_assertions`, le conteneur remis
 à un `build`, à un `BootContext` et à un `RunContext` porte le `requires` de la
-liaison correspondante et panique sur toute résolution hors déclaration. Elle
-n'est pas totale : une résolution conditionnelle n'est vue que sur les exécutions
-qui l'atteignent, un scope n'en porte pas — une unité de travail résout du
-`Scoped`, qu'un appelant non `Scoped` ne peut pas déclarer sans que la phase 3 le
-refuse (`LifetimeConflict`) — et un build de release n'en porte aucune.
+liaison correspondante et panique sur toute résolution hors déclaration. Un scope
+ouvert depuis lui en porte un aussi, mais sur l'autre liste : le
+`requires_scoped` de la même liaison, c'est-à-dire ce que l'unité déclare
+résoudre dans l'unité de travail qu'elle ouvre. Une unité non `Scoped` déclare
+donc bien du `Scoped` — là, et non dans `requires` où la phase 3 le refuserait
+(`LifetimeConflict`) —, et cette seconde liste a sa propre garde de phase 3
+(`ScopeMismatch`, § 6). Aucune des deux n'est totale : une résolution
+conditionnelle n'est vue que sur les exécutions qui l'atteignent, un scope ouvert
+depuis un conteneur non cadré n'est pas cadré non plus, et un build de release
+n'en porte aucune.
 
 ### Register et Resolve sont deux phases, pas une
 
@@ -188,7 +193,7 @@ Un Bundle **publié** = une crate. Une feature **distribuée** = un workspace :
 ```
 my-feature/                       # workspace de distribution
   crates/
-    my-feature-contracts/         # traits publics uniquement — dépend de kernel-core
+    my-feature-contracts/         # traits publics uniquement — dépend de kernel-core par défaut
     my-feature-component/         # optionnel : le bloc technique réutilisable
     my-feature-bundle/            # la crate qui implémente Bundle
 ```
@@ -206,9 +211,11 @@ rien publier. La règle de crate porte sur ce qui est distribué.
 
 La **première** phrase est celle qui est **gardée en CI** (§ 16) :
 `ci/check-bundle-graph.sh` marche le graphe résolu et refuse toute arête
-`*-bundle` → `*-bundle`. La seconde reste une règle de conception non gardée, et
-elle porte sur les *autres* features : une crate `*-bundle` dépend aussi du
-Kernel et, le cas échéant, de la crate `*-component` de sa propre feature.
+`*-bundle` → `*-bundle`. C'est la **seule** arête gardée : rien en CI n'impose ce
+dont dépend une crate `*-contracts`. La seconde phrase reste une règle de
+conception non gardée, et elle porte sur les *autres* features : une crate
+`*-bundle` dépend aussi du Kernel et, le cas échéant, de la crate `*-component`
+de sa propre feature.
 
 ### Enregistrement
 
@@ -258,11 +265,14 @@ pub trait Clock: Send + Sync + 'static {
   aussi. Un provider qui résout dans son `build` convertit l'erreur lui-même :
   `BuildError` n'implémente pas `From<ContainerError>`.
 - **Vérification** : phase 3, **toutes les violations agrégées**, jamais la
-  première seule. Dix contrôles : `MissingContract`, `DuplicateDefault`,
+  première seule. Douze contrôles : `MissingContract`, `DuplicateDefault`,
   `DuplicateNamed`, `Cycle`, `UndeclaredExtensionPoint`, `ManifestMismatch`,
-  `UnknownBundleOrder`, `BundleCycle`, `DuplicateBundle`, `LifetimeConflict`.
-  Trois d'entre eux lisent aussi les Listeners — ce qu'un Listener résout pendant
-  la diffusion est vérifié là ou nulle part.
+  `UnknownBundleOrder`, `BundleOutOfOrder`, `BundleCycle`, `DuplicateBundle`,
+  `LifetimeConflict`, `ScopeMismatch`. Trois d'entre eux (1, 6, 11) lisent aussi
+  les Listeners — ce qu'un Listener résout pendant la diffusion est vérifié là ou
+  nulle part — et trois (1, 6, 12) lisent les déclarations `requires_scoped`,
+  pour la même raison : une résolution par unité de travail est vérifiée là ou
+  sur la première requête en production.
 
 ### Implémentations multiples
 
@@ -282,9 +292,13 @@ Deux fournitures non nommées du même contrat = **erreur de phase 3**, pas un
 
 ### Où vit un contract
 
-Dans une crate à part, dépendant de `kernel-core` seulement (§ 15). Un contract
-ne dépend jamais du Kernel runtime, ce qui lui permet d'être stable et léger,
-et ce qui garde les crates `*-contracts` compilables sans Tokio.
+Dans une crate à part. Le **défaut** est de ne dépendre que de `kernel-core`
+(§ 15) : c'est ce qui garde une crate `*-contracts` légère, stable et compilable
+sans runtime ni Tokio, et c'est ce que font les cinq crates de contrats des
+exemples. Une crate qui doit réellement faire **passer** une unité de travail —
+une signature qui nomme `Scope` (§ 5) — **peut** dépendre de `kernel`, au prix
+exact de cette légèreté. Aucune garde ne l'en empêche ; l'échange se juge sur ce
+que le contrat exige, pas sur une règle.
 
 ---
 
@@ -328,6 +342,18 @@ puisque la phase 3 refuse d'avance qu'une liaison non `Scoped`, ou un Listener
 qui diffuse hors de tout scope, déclare un `requires` sur du `Scoped`
 (`ResolveError::LifetimeConflict`).
 
+Ce que l'unité résout **dans** le scope qu'elle ouvre se déclare dans l'autre
+liste, `Provider::requires_scoped`, et c'est la garde symétrique qui la lit :
+`ResolveError::ScopeMismatch` refuse d'avance qu'une unité déclare y résoudre un
+contrat qui n'est pas lié `Scoped` — elle ouvrirait un scope pour recevoir une
+valeur de tout le processus.
+
+`Scope` est un type de `kernel` : une crate `*-contracts` dont une signature le
+nomme dépend donc de `kernel` et non du seul `kernel-core`, et perd la légèreté
+que le § 4 lui prête. L'échange vaut quand le contrat fait réellement passer une
+unité de travail ; il ne vaut pas pour faire circuler ce que le container résout
+déjà, chaque unité ouvrant le sien depuis le conteneur qu'elle a reçu.
+
 ### Fourniture
 
 ```rust
@@ -335,6 +361,8 @@ pub struct Provider<C: ?Sized + Send + Sync + 'static> {
     pub lifetime: Lifetime,
     /// Declared dependencies — the graph the kernel checks in phase 3.
     pub requires: Vec<ContractRef>,
+    /// What this unit resolves inside the scope it opens per unit of work.
+    pub requires_scoped: Vec<ContractRef>,
     pub build: BuildFn<C>,
 }
 
@@ -429,12 +457,14 @@ une décision d'architecture, pas un ajout. (Le `Registry` porte aussi quatre
 affordances de **substitution**, `#[doc(hidden)]` et sous la feature `testing` :
 elles ne sont pas atteignables depuis un Bundle et sont décrites au § 18.)
 
-Trois de ces verbes rendent une poignée qui sert à déclarer, jamais à
-enregistrer autre chose. `provide` et `provide_named` rendent un `Binding` —
-c'est lui qui porte `as_default`. `listen` rend un `Listening`, sur lequel
-`requires` déclare ce que le Listener résoudra **pendant la diffusion** : la
-phase 3 lit ces déclarations comme celles d'un provider, et ce qu'un Listener ne
-déclare pas là n'est vérifié nulle part.
+Cinq de ces verbes rendent une poignée qui sert à déclarer, jamais à
+enregistrer autre chose. `provide`, `provide_named`, `component` et `runnable`
+rendent un `Binding` — c'est lui qui porte `as_default` et `also`, ce dernier
+liant le **même** objet sous un contrat de plus : une liaison de plus, pas un
+second objet, et son unique résolution y est déclarée comme toute autre.
+`listen` rend un `Listening`, sur lequel `requires` déclare ce que le Listener
+résoudra **pendant la diffusion** : la phase 3 lit ces déclarations comme celles
+d'un provider, et ce qu'un Listener ne déclare pas là n'est vérifié nulle part.
 
 `component` et `runnable` font deux choses de plus que leur nom : ils **lient
 `T` comme contrat** dans la même table (§ 5) et **forcent** `Lifetime::Shared` —
@@ -592,6 +622,20 @@ pub enum RestartPolicy {
 3. Tous les Runnables démarrent **après** que tous les Components ont booté. Le
    Kernel n'en ordonne aucun contre un autre : un Runnable peut détenir l'`Arc`
    d'un autre, mais ne doit rien supposer du moment où celui-ci tourne.
+
+### Le fan-out d'un Runnable : `Children`
+
+Un Runnable qui prend du travail du dehors lance une tâche par unité, et les
+mêmes trois questions reviennent : combien en vol, que faire d'une neuve quand
+l'échelle a bougé, que devient ce qui déborde le budget. `Children` les porte une
+fois pour toutes — il moissonne au fil de l'eau, **refuse** une fille dès que
+l'échelle a quitté `Running`, attend l'ensemble pendant la fenêtre de drain et
+coupe au terme du budget `stop`, en rendant le nombre de coupées.
+
+`spawn` rend un `Spawned`, pas un booléen : `Draining` dit que le processus s'en
+va et que le travail doit être refusé pour de bon, `AtLimit` que ce parent est
+plein maintenant et que le même travail peut être représenté plus tard. Le
+troisième variant est `Started`.
 
 ### Ce que fait le superviseur
 
@@ -963,6 +1007,10 @@ impl Shutdown {
     /// which. The periodic-work primitive: a unit that polls needs no timer.
     pub async fn sleep_until_draining(&self, period: Duration) -> Tick;
     pub async fn sleep_until_stopping(&self, period: Duration) -> Tick;
+
+    /// Sleeps to the current stage's deadline, following it if it moves.
+    /// `Budget::Spent` says the grace ran out, `Untimed` that there was none.
+    pub async fn sleep_until_deadline(&self) -> Budget;
 }
 ```
 
@@ -988,12 +1036,19 @@ impl Shutdown {
   `drain + stop + (stop × components) + 2 × stop`, les deux derniers termes étant
   les attentes de `settle` (§ 10). Ce prix achète une règle — une unité n'est
   jamais abandonnée parce qu'une autre a débordé.
-- **Les Components sont prévenus du `Draining`, mais ne le traversent pas.** Ils
-  reçoivent `Component::drain` sur le premier barreau, **avant** qu'un seul
-  Runnable n'ait été prié de s'arrêter, et **en même temps** que la descente des
-  Runnables — chaque Component tenant la totalité du budget `drain`, de sorte que
-  le débordement de l'un ne raccourcit pas celui de son voisin et que la fenêtre
-  n'est pas dépensée N fois. Leur `shutdown`, lui, se déroule sur une seconde
+- **Les Components traversent le `Draining`.** Ils reçoivent `Component::drain`
+  sur le premier barreau, **avant** qu'un seul Runnable n'ait été prié de
+  s'arrêter, et **en même temps** que la descente des Runnables — chaque Component
+  tenant la totalité du budget `drain`, de sorte que le débordement de l'un ne
+  raccourcit pas celui de son voisin et que la fenêtre n'est pas dépensée N fois.
+  Le barreau est **tenu jusqu'à ce que les deux moitiés soient finies ou
+  coupées** : un `drain` qui survit au dernier Runnable lit encore `Draining`,
+  sans quoi la garantie que l'appel documente serait fausse à la première unité
+  lente. Cela ne coûte aucune attente non bornée — la marche des Components est
+  coupée à `policy.drain`, la descente des Runnables à leur propre budget ou à
+  l'échéance globale —, et un Component peut donc opposer son travail à
+  `cx.shutdown().stopping()` en sachant que ce déclenchement signifie *mon drain
+  a été coupé*. Leur `shutdown`, lui, se déroule sur une seconde
   échelle placée d'emblée en `Stopping` : à ce moment rien de leur travail n'est
   en vol. D'où un seul `shutdown_timeout` sur `ComponentDescriptor` — le `drain`
   d'un Component est borné par la politique, à plat — contre deux bornes sur
@@ -1027,7 +1082,19 @@ lancée demande l'arrêt à la destruction, et la tâche le mène à terme (§ 0
 `KernelHandle` est clonable et **atteignable** depuis le Container par
 l'accesseur `Container::handle()`, que `BootContext` et `RunContext` reflètent —
 ce n'est pas une liaison, `container.get::<KernelHandle>()` ne résout rien.
-N'importe quelle unité peut donc demander l'arrêt sans qu'un contrat existe.
+N'importe quelle unité peut donc demander l'arrêt sans qu'un contrat existe. Elle
+**lit** aussi l'échelle par lui : `KernelHandle::stage()` rend le barreau, là où
+`is_shutting_down()` ne rend que la requête — une unité qui n'atteint rien de
+plus que la poignée distingue quand même `Draining` de `Stopping`, ce qu'un
+booléen ne sait pas dire.
+
+Le travail qu'une application avait en vol quand l'échelle l'a coupé n'appartient
+à aucune unité du Kernel, donc ni `RunError` ni `ShutdownError` ne le nomment :
+c'est `Aborted`, une erreur ordinaire portant un `AbortReason`
+(`ShutdownRequested` ou `DeadlineExceeded`) et rien d'autre — ni unité, ni
+charge, ni domaine. Le Kernel la reconnaît à travers l'emballage applicatif
+(`RunError::abort_reason`, `ShutdownError::abort_reason`), ce qui évite que deux
+appelants inventent deux mots pour le même fait.
 
 ---
 
@@ -1138,9 +1205,11 @@ kernel/
     kernel-testkit/    # builder de test, doublures
 ```
 
-Raison du découpage : une crate `*-contracts` ne dépend que de `kernel-core`,
-donc elle est légère, stable, et compilable sans runtime. C'est ce qui rend la
-règle d'isolation du § 3 supportable en pratique.
+Raison du découpage : une crate `*-contracts` ne dépend, par défaut, que de
+`kernel-core`, donc elle est légère, stable, et compilable sans runtime. C'est ce
+qui rend la règle d'isolation du § 3 supportable en pratique. Celle qui nomme
+`Scope` dans ses signatures dépend de `kernel` et perd cette propriété — c'est
+permis, non gardé, et c'est un coût à peser (§ 4).
 
 `kernel-macros` ne dépend de **rien** — ni `syn`, ni `quote`, ni `proc-macro2` :
 son analyseur de tokens est écrit à la main, parce qu'une crate de macros qui
@@ -1273,9 +1342,29 @@ tourné.
   courts (50 ms / 100 ms), et un enregistreur de telemetry lisible avant la
   construction. C'est lui qui porte `start`, et `start` est ce qui **produit** le
   harnais ; `TestHarness` conduit ensuite le Kernel avec `stop` et `wait`, et
-  l'observe avec `is_running`, `container`, `handle`, `telemetry` et
-  `wait_for_record` — cette dernière étant la façon de se synchroniser sur un
-  record du Kernel plutôt que de dormir un temps deviné.
+  l'observe avec `is_running`, `container`, `handle`, `telemetry`, `records`,
+  `count` et `wait_for_record` — cette dernière étant la façon de se synchroniser
+  sur un record du Kernel plutôt que de dormir un temps deviné.
+- `stopped` et `waited` sont ces deux conduites-là rendant un `Ended` au lieu du
+  seul `Outcome`. Les lignes les plus intéressantes de l'échelle — un
+  `runnable.abandoned`, le `kernel.stopped` final — sont écrites **pendant**
+  l'appel qui consomme le harnais : `Ended` ressort le puits avec le verdict
+  (`outcome`, `is_success`, `telemetry`, `records`, `count`, `contains`, `find`),
+  de sorte qu'un test lit ce que l'arrêt a consigné sans avoir cloné le puits
+  d'avance. Sans lui, la seule façon de regarder après coup était de regarder
+  avant.
+- `RecordMatch` est la question posée à ces records : `event`, plus
+  `field`/`with` pour contraindre les champs, parce que le nom de l'événement est
+  rarement le fait sous test — un redémarrage se distingue d'un autre par l'unité
+  qu'il nomme. `TestHarness::wait_for` attend sur cette question comme
+  `wait_for_record` attend sur un nom, et rend le compte vu : l'assertion porte
+  sur un nombre, pas sur un dépassement.
+- Trois phases suffisent souvent : `TestBuilder::registered` s'arrête à la fin de
+  la phase 3 et rend un `Registered` — le container et le dispatcher qu'elle a
+  produits, plus `bindings`, `defaults_to` et `listeners` pour interroger le
+  graphe sans rien faire tourner. `Registered::of` est sa forme courte pour un
+  Bundle seul, et la fonction libre `container` celle qui ne veut que les
+  liaisons.
 - `TestBuilder::keep_running` tient le Kernel ouvert quand rien dans le graphe ne
   tourne. Sans elle, un Bundle qui possède un Component et aucun Runnable n'est
   pas pilotable : la phase 5 publie `Running` et demande l'arrêt dans le même

@@ -27,6 +27,12 @@
 //! and never later than the global deadline: a descriptor's `drain_timeout` and
 //! `stop_timeout` can therefore only shorten a stage, never extend it. Whatever
 //! is still alive when the second stage ends is aborted, not awaited.
+//!
+//! The first rung is walked by [`Supervisor::drain`] and the second by
+//! [`Supervisor::stop`], as two calls rather than one, because the runnables
+//! are not the only thing on the first rung: the caller drains its components
+//! on it too, and whoever holds both halves is the only one that can keep the
+//! rung open until both are done.
 
 use core::fmt;
 use core::future::{Future, poll_fn};
@@ -170,7 +176,30 @@ impl Supervisor {
         }
     }
 
-    /// Drives the two-stage stop and joins every task.
+    /// Opens the first rung and walks the runnables down it.
+    ///
+    /// Half of the stop, and not the whole of it, because the runnables are not
+    /// the only thing that happens on this rung: the caller drains its
+    /// components on it too, and the ladder must not climb while either half is
+    /// still walking. Whoever calls this owns that ordering — the rung stays
+    /// open until this returns AND whatever the caller ran beside it has
+    /// returned, and only then does [`stop`](Self::stop) open the next one.
+    ///
+    /// Bounded like every rung: it ends when every live runnable has wound
+    /// down, when the last of them has spent its own drain budget, or at the
+    /// global deadline, whichever comes first.
+    pub(crate) async fn drain(&mut self, controller: &ShutdownController) {
+        let watcher = controller.watcher();
+
+        controller.begin_draining();
+        self.wind_down(&watcher, Stage::Draining).await;
+    }
+
+    /// Opens the second rung, walks it, and joins every task.
+    ///
+    /// Called after [`drain`](Self::drain), which is what opened the first one:
+    /// a stop that skipped it would announce `Stopping` to units that were
+    /// never told to stop taking work.
     ///
     /// A task that outlives its deadline is abandoned, recorded, and does not
     /// hold up the rest: the kernel never blocks indefinitely.
@@ -182,9 +211,6 @@ impl Supervisor {
     /// [`DeadlineExceeded`](kernel_core::RunErrorKind::DeadlineExceeded).
     pub(crate) async fn stop(mut self, controller: &ShutdownController) -> Vec<RunError> {
         let watcher = controller.watcher();
-
-        controller.begin_draining();
-        self.wind_down(&watcher, Stage::Draining).await;
 
         controller.begin_stopping();
         self.wind_down(&watcher, Stage::Stopping).await;
@@ -678,6 +704,18 @@ mod tests {
         ShutdownPolicy::new(Duration::from_secs(1), Duration::from_secs(2))
     }
 
+    /// The whole ladder, walked the way the kernel walks it: the first rung,
+    /// then the second. The kernel holds the first one open for its component
+    /// drain as well; with no components in these tests, the two calls are
+    /// back to back.
+    async fn climb_ladder(
+        mut supervisor: Supervisor,
+        controller: &ShutdownController,
+    ) -> Vec<RunError> {
+        supervisor.drain(controller).await;
+        supervisor.stop(controller).await
+    }
+
     /// The gap: the supervisor built the context and never told it what the
     /// runnable had declared, so a unit reading its own bound read the
     /// ladder's.
@@ -690,7 +728,7 @@ mod tests {
         });
         let (supervisor, controller, _handle) = started(vec![unit], brief());
 
-        supervisor.stop(&controller).await;
+        climb_ladder(supervisor, &controller).await;
 
         let (own, ladder) = seen.lock().expect("seen").expect("it was stopped");
         let own = own.expect("its own bound");
@@ -730,7 +768,7 @@ mod tests {
 
         assert!(matches!(reason, ShutdownReason::EssentialFinished(_)));
 
-        let errors = supervisor.stop(&controller).await;
+        let errors = climb_ladder(supervisor, &controller).await;
         assert!(matches!(errors[0].kind(), RunErrorKind::Failed(_)));
     }
 
@@ -785,7 +823,7 @@ mod tests {
         handle.shutdown();
         supervisor.watch(&watcher).await;
 
-        let errors = supervisor.stop(&controller).await;
+        let errors = climb_ladder(supervisor, &controller).await;
         let refused = errors
             .iter()
             .filter(|error| matches!(error.kind(), RunErrorKind::Failed(_)))
@@ -805,7 +843,7 @@ mod tests {
             .expect("the supervisor outlived the panic");
         assert!(matches!(reason, ShutdownReason::EssentialFinished(_)));
 
-        let errors = supervisor.stop(&controller).await;
+        let errors = climb_ladder(supervisor, &controller).await;
         match errors[0].kind() {
             RunErrorKind::Panicked(message) => assert!(message.contains("came apart")),
             other => panic!("unexpected kind: {other}"),
@@ -829,7 +867,7 @@ mod tests {
         handle.shutdown();
         supervisor.watch(&watcher).await;
 
-        let errors = supervisor.stop(&controller).await;
+        let errors = climb_ladder(supervisor, &controller).await;
         let panics = errors
             .iter()
             .filter(|error| matches!(error.kind(), RunErrorKind::Panicked(_)))
@@ -889,9 +927,12 @@ mod tests {
 
         handle.shutdown();
         let started_at = Instant::now();
-        let errors = timeout(Duration::from_secs(10), supervisor.stop(&controller))
-            .await
-            .expect("the kernel stopped anyway");
+        let errors = timeout(
+            Duration::from_secs(10),
+            climb_ladder(supervisor, &controller),
+        )
+        .await
+        .expect("the kernel stopped anyway");
         let elapsed = Instant::now() - started_at;
 
         assert_eq!(errors.len(), 1);
@@ -914,7 +955,7 @@ mod tests {
 
         handle.shutdown();
         let started_at = Instant::now();
-        let errors = supervisor.stop(&controller).await;
+        let errors = climb_ladder(supervisor, &controller).await;
         let elapsed = Instant::now() - started_at;
 
         assert!(matches!(errors[0].kind(), RunErrorKind::DeadlineExceeded));
@@ -938,7 +979,7 @@ mod tests {
 
         handle.shutdown();
         let started_at = Instant::now();
-        let errors = supervisor.stop(&controller).await;
+        let errors = climb_ladder(supervisor, &controller).await;
         let elapsed = Instant::now() - started_at;
 
         assert!(matches!(errors[0].kind(), RunErrorKind::DeadlineExceeded));
@@ -954,7 +995,7 @@ mod tests {
 
         handle.shutdown();
         let started_at = Instant::now();
-        let errors = supervisor.stop(&controller).await;
+        let errors = climb_ladder(supervisor, &controller).await;
         let elapsed = Instant::now() - started_at;
 
         assert!(errors.is_empty());
@@ -971,7 +1012,7 @@ mod tests {
 
         handle.shutdown();
         let started_at = Instant::now();
-        let errors = supervisor.stop(&controller).await;
+        let errors = climb_ladder(supervisor, &controller).await;
         let elapsed = Instant::now() - started_at;
 
         assert!(errors.is_empty());
@@ -1000,7 +1041,7 @@ mod tests {
         handle.shutdown();
 
         let started_at = Instant::now();
-        let errors = supervisor.stop(&controller).await;
+        let errors = climb_ladder(supervisor, &controller).await;
         let elapsed = Instant::now() - started_at;
 
         assert!(elapsed < Duration::from_secs(2), "waited on the backoff");

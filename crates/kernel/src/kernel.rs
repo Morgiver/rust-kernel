@@ -844,17 +844,25 @@ async fn drive(kernel: Kernel) -> Ending {
     // returned — which is the whole point of the hook, and they are told
     // CONCURRENTLY with the wind-down, so a component's drain never eats the
     // window the runnables were given to finish what is in flight.
+    //
+    // The rung is held until BOTH halves are done or cut, which is why the
+    // supervisor's stop is split in two here. A drain that outlives the last
+    // runnable used to read `Stopping` from inside its own drain — the ladder
+    // climbed under its feet — and the hook documents the opposite. Holding it
+    // costs no unbounded wait: the component walk is cut at `policy.drain` and
+    // the wind-down at the runnables' own drain budgets or the global deadline,
+    // so the rung ends at the later of two bounded instants.
     controller.begin_draining();
     let watcher = controller.watcher();
     let draining = ShutdownContext::new(&resolved.container, &dispatcher, &watcher);
-    let (drained, errors) = tokio::join!(
+    let (drained, ()) = tokio::join!(
         drain(&booted, &draining, policy.drain),
         // Runnables first, components second, each in the reverse of the order
-        // it actually booted in. The supervisor drives the rest of the ladder
-        // itself, so this is the only place the second rung is moved during a
-        // normal stop.
-        supervisor.stop(&controller),
+        // it actually booted in.
+        supervisor.drain(&controller),
     );
+    // The second rung, opened only now that nothing is left on the first one.
+    let errors = supervisor.stop(&controller).await;
 
     // Before the components go down. A notification a runnable emitted on its
     // way out reaches listeners that resolve through the container, and a
@@ -1482,6 +1490,61 @@ mod tests {
                 self.1.push("run");
                 cx.shutdown().stopping().await;
                 self.1.push("returned");
+                Ok(())
+            })
+        }
+    }
+
+    /// Sleeps through its whole drain, recording the rung at both ends.
+    ///
+    /// What the ladder must hold: a drain that outlives every runnable still
+    /// reads `Draining` when it returns.
+    struct Slow(Trace);
+
+    impl Component for Slow {
+        fn name() -> &'static str {
+            "slow"
+        }
+
+        fn descriptor(&self) -> ComponentDescriptor {
+            ComponentDescriptor::new()
+        }
+
+        fn boot<'a>(
+            &'a self,
+            _cx: &'a BootContext<'a>,
+        ) -> BoxFuture<'a, Result<(), ComponentError>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn drain<'a>(
+            &'a self,
+            cx: &'a ShutdownContext<'a>,
+        ) -> BoxFuture<'a, Result<(), ComponentError>> {
+            Box::pin(async move {
+                self.0.push(format!("enter:{:?}", cx.shutdown().stage()));
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                self.0.push(format!("leave:{:?}", cx.shutdown().stage()));
+                Ok(())
+            })
+        }
+    }
+
+    /// Returns the instant the drain rung is reached, ahead of any drain.
+    struct Brief(RunnableDescriptor);
+
+    impl Runnable for Brief {
+        fn name() -> &'static str {
+            "brief"
+        }
+
+        fn descriptor(&self) -> RunnableDescriptor {
+            self.0
+        }
+
+        fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
+            Box::pin(async move {
+                cx.shutdown().draining().await;
                 Ok(())
             })
         }
@@ -2318,6 +2381,38 @@ mod tests {
             Some(KernelError::Shutdown(errors)) => assert_eq!(errors[0].unit(), "alpha"),
             other => panic!("unexpected outcome: {other:?}"),
         }
+    }
+
+    // The rung a drain used to lose under its own feet: the runnables had all
+    // returned, the ladder climbed, and a component still inside its drain
+    // read `Stopping` while it was still draining.
+    #[tokio::test(start_paused = true)]
+    async fn drain_holds_its_rung() {
+        let sink = RecordingTelemetry::new();
+        let trace = Trace::default();
+        let inner = trace.clone();
+
+        let kernel = builder(&sink, move |registry| {
+            registry.component(Provider::from_value(Arc::new(Slow(inner.clone()))));
+            registry.runnable(Provider::from_value(Arc::new(Brief(essential()))));
+            Ok(())
+        })
+        .build()
+        .await
+        .expect("build");
+
+        let handle = kernel.handle();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            handle.shutdown();
+        });
+
+        let outcome = kernel.run().await;
+
+        assert!(outcome.is_success());
+        // Both ends of a drain that outlived the only runnable, and both on
+        // the rung the hook documents.
+        assert_eq!(trace.entries(), ["enter:Draining", "leave:Draining"]);
     }
 
     // ----------------------------------------------------------------------

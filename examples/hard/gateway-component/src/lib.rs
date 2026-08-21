@@ -49,11 +49,11 @@
 //! kernel resets the connection under it. The caller learns nothing until the
 //! very end, and what it learns then is indistinguishable from a crash.
 //!
-//! *Close the listener*, which is what [`Acceptor`] does, unbinds the address.
-//! A caller that connects during the drain is refused **immediately**, by the
-//! operating system, with the one error every client already knows how to act
-//! on. It can fail over to another process in the same millisecond instead of
-//! holding a socket open against one that is leaving.
+//! *Close the listener*, which is what [`Doorway`]'s [`Component::drain`] does,
+//! unbinds the address. A caller that connects during the drain is refused
+//! **immediately**, by the operating system, with the one error every client
+//! already knows how to act on. It can fail over to another process in the same
+//! millisecond instead of holding a socket open against one that is leaving.
 //!
 //! What closing costs is the courtesy line: there is no connection left to
 //! write "I am closing" on. That is the trade, and it is worth taking — a
@@ -384,7 +384,7 @@ impl Component for Doorway {
 /// Reports on the socket.
 ///
 /// It answers the one question a load balancer asks: is this process taking
-/// connections? [`Health::Down`] the instant the acceptor closes the door,
+/// connections? [`Health::Down`] the instant the drain shuts the door,
 /// which is *before* the process stops and is exactly when traffic should stop
 /// arriving.
 #[derive(Debug)]

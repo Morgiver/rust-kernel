@@ -8,20 +8,22 @@
 //! finishes what it holds and refuses what it does not, and a client on the
 //! other end of a TCP connection reads the difference.
 //!
-//! # What the shape of the example forces, and what these tests hang on
+//! # Which half is whose, and what these tests hang on
 //!
-//! A [`Component`](kernel::Component) is handed its shutdown context only when
-//! the kernel comes to stop it, which is AFTER every runnable has already
-//! returned. By then the drain window is over, so a component cannot react to
-//! `Draining` at all. Only a runnable holds a `RunContext`, and only a
-//! `RunContext` carries the ladder. The socket may be owned by a component —
-//! bound at boot, released at shutdown — but the accept loop that stops
-//! accepting at `Draining` and finishes in flight before `Stopping` is a
-//! runnable, necessarily.
+//! The refusal and the wind-down are two different jobs and they sit on two
+//! different units. [`Component::drain`](kernel::Component::drain) is called as
+//! the ladder reaches `Draining`, before a single runnable has been asked to
+//! wind down, and it is where the component that OWNS the socket shuts it: the
+//! refusal is a property of the resource. Finishing what is already in flight
+//! and cutting what outlives the window is a property of the LOOP, and only a
+//! runnable holds both the `RunContext` that carries the ladder and the set of
+//! requests its two rungs apply to.
 //!
 //! Every test below reads that split from outside the process:
 //! [`drain_refuses_new_work`] watches the door shut while the process is still
-//! up and still working, which is a thing no component could have arranged.
+//! up and still answering the request it already holds — the component refusing
+//! on one rung and the loop draining on the same one, at the same time. Take
+//! `Doorway`'s drain away and three of these tests go red, that one first.
 //!
 //! # The wire, in one line
 //!
@@ -52,8 +54,8 @@ use std::sync::Arc;
 use gateway_bundle::{Acceptor, Doorway, GatewayBundle, Tally};
 use kernel::core::telemetry::Record;
 use kernel::core::{ConfigNode, ConfigTree, RecordingTelemetry};
-use kernel::{MemorySource, Outcome, ShutdownPolicy};
-use kernel_testkit::{TestBuilder, TestHarness};
+use kernel::{MemorySource, ShutdownPolicy};
+use kernel_testkit::{Ended, TestBuilder, TestHarness};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::Instant;
@@ -186,13 +188,17 @@ impl Service {
     }
 
     /// Asks for the stop and waits for the run to end.
-    async fn stop(self) -> Outcome {
-        bounded("the kernel to stop", self.harness.stop()).await
+    ///
+    /// [`Ended`] rather than the outcome alone, because the sink outlives the
+    /// harness in it: what the ladder files on its way out is readable AFTER
+    /// the run returned, which is the only moment it is all there.
+    async fn stop(self) -> Ended {
+        bounded("the kernel to stop", self.harness.stopped()).await
     }
 
     /// Waits for a stop that was already asked for.
-    async fn wait(self) -> Outcome {
-        bounded("the kernel to stop", self.harness.wait()).await
+    async fn wait(self) -> Ended {
+        bounded("the kernel to stop", self.harness.waited()).await
     }
 }
 
@@ -400,8 +406,8 @@ async fn held_request_completes() {
     assert_eq!(service.tally.answered(), 1);
     assert_eq!(service.tally.cut(), 0, "nothing was cut");
 
-    let outcome = service.wait().await;
-    assert!(outcome.is_success(), "{outcome:?}");
+    let ended = service.wait().await;
+    assert!(ended.is_success(), "{ended:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -415,13 +421,13 @@ async fn held_request_completes() {
 /// window if the process is still up and still serving when it happens — which
 /// is why a slow request is held open across it and read afterwards.
 ///
-/// This is also where the acceptor's choice is visible from outside. It CLOSES
-/// the listener rather than merely ceasing to select on it, so the operating
-/// system refuses the probe in the same millisecond. Had it left the socket
-/// bound, the probe would have connected into the backlog and waited for an
-/// answer nobody would ever write, and this assertion would fail — as it
-/// should, because a caller left hanging until the process exits learns
-/// nothing it can act on.
+/// This is also where the component's choice is visible from outside. Its
+/// `drain` CLOSES the listener rather than merely ceasing to select on it, so
+/// the operating system refuses the probe in the same millisecond. Had it left
+/// the socket bound, the probe would have connected into the backlog and waited
+/// for an answer nobody would ever write, and this assertion would fail — as it
+/// should, because a caller left hanging until the process exits learns nothing
+/// it can act on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn drain_refuses_new_work() {
     let service = Service::start(Setup {
@@ -436,9 +442,8 @@ async fn drain_refuses_new_work() {
     service.until_admitted(1).await;
     service.harness.handle().shutdown();
 
-    // The instant `Draining` reached the accept loop. No component could have
-    // arranged this: a component is not told anything until every runnable has
-    // already returned.
+    // The instant the component was told to drain: it shuts the door there,
+    // before any runnable has been asked to wind down.
     until("the door to shut", || !service.doorway.is_open()).await;
     assert!(
         service.harness.is_running(),
@@ -460,8 +465,8 @@ async fn drain_refuses_new_work() {
         "the probe was never accepted, so it never became work"
     );
 
-    let outcome = service.wait().await;
-    assert!(outcome.is_success(), "{outcome:?}");
+    let ended = service.wait().await;
+    assert!(ended.is_success(), "{ended:?}");
 }
 
 /// A connection taken before the door shut is answered after it, not reset.
@@ -521,8 +526,8 @@ async fn held_connection_survives_the_drain() {
     );
     assert_eq!(service.tally.cut(), 0, "nothing was cut");
 
-    let outcome = service.wait().await;
-    assert!(outcome.is_success(), "{outcome:?}");
+    let ended = service.wait().await;
+    assert!(ended.is_success(), "{ended:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -570,17 +575,17 @@ async fn stop_cuts_the_overrun() {
         "a cut request is still one unit of work, and is still labelled"
     );
 
-    // Both read across the stop: the abandonment is filed as the ladder ends,
-    // so a test that looked before the run returned would look too early.
+    // The abandonment is filed as the ladder ends, so everything here is read
+    // after the run returned: the counters through the clone the tally already
+    // is, and the records off the ended run itself.
     let tally = Arc::clone(&service.tally);
-    let telemetry = service.harness.telemetry();
-    let outcome = service.wait().await;
+    let ended = service.wait().await;
 
-    assert!(outcome.is_success(), "the stop was asked for: {outcome:?}");
+    assert!(ended.is_success(), "the stop was asked for: {ended:?}");
     assert_eq!(tally.cut(), 1);
     assert_eq!(tally.answered(), 0, "nothing was answered by the handler");
     assert_eq!(
-        supervised(&telemetry, "runnable.abandoned"),
+        supervised(&ended.telemetry(), "runnable.abandoned"),
         ["hand"],
         "the one unit that outlived the deadline is named, and only it"
     );
@@ -653,8 +658,8 @@ async fn scopes_are_per_request() {
     assert_ne!(one_work.docket, two_work.docket, "and two dockets");
     assert_ne!(one_work.job, two_work.job);
 
-    let outcome = service.stop().await;
-    assert!(outcome.is_success(), "{outcome:?}");
+    let ended = service.stop().await;
+    assert!(ended.is_success(), "{ended:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -730,8 +735,8 @@ async fn full_queue_refuses() {
         "every refusal the caller saw is on the telemetry stream too"
     );
 
-    let outcome = service.stop().await;
-    assert!(outcome.is_success(), "{outcome:?}");
+    let ended = service.stop().await;
+    assert!(ended.is_success(), "{ended:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -783,14 +788,6 @@ async fn ancillary_panic_is_contained() {
         "the restart landed while the request was still in flight"
     );
 
-    let telemetry = service.harness.telemetry();
-    assert_eq!(supervised(&telemetry, "runnable.failed"), ["foreman"]);
-    assert_eq!(
-        supervised(&telemetry, "runnable.restarted"),
-        ["foreman"],
-        "nothing that serves a request was restarted"
-    );
-
     let answer = answer(&mut wire).await;
     assert_eq!(answer.status, "ok", "the request never learned: {answer:?}");
     assert_eq!(
@@ -803,6 +800,18 @@ async fn ancillary_panic_is_contained() {
     assert_eq!(service.tally.cut(), 0);
     assert!(service.harness.is_running(), "the process is still up");
 
-    let outcome = service.stop().await;
-    assert!(outcome.is_success(), "{outcome:?}");
+    // Read off the ended run rather than mid-flight, so the lists cover the
+    // stop as well: nothing that serves a request was restarted at any point,
+    // not merely by the time the answer came back.
+    let ended = service.stop().await;
+    assert!(ended.is_success(), "{ended:?}");
+    assert_eq!(
+        supervised(&ended.telemetry(), "runnable.failed"),
+        ["foreman"]
+    );
+    assert_eq!(
+        supervised(&ended.telemetry(), "runnable.restarted"),
+        ["foreman"],
+        "nothing that serves a request was restarted"
+    );
 }
