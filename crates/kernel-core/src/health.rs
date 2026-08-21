@@ -124,6 +124,13 @@ impl Default for Health {
     }
 }
 
+/// Renders a verdict as one line, detail included.
+///
+/// The rendering is complete on its own — `up`, `degraded: <detail>`,
+/// `down: <detail>` — and carries no name, no punctuation of its own and no
+/// newline. That is deliberate: an aggregate that renders several verdicts
+/// composes them as `{name}: {verdict}` lines and never matches on the
+/// variant to recover the detail.
 impl core::fmt::Display for Health {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -264,6 +271,26 @@ mod tests {
         assert_eq!(Health::Up.to_string(), "up");
         assert_eq!(Health::degraded("slow").to_string(), "degraded: slow");
         assert_eq!(Health::down("gone").to_string(), "down: gone");
+    }
+
+    #[test]
+    fn composes_into_lines() {
+        let verdicts = [
+            ("first", Health::Up),
+            ("second", Health::degraded("slow")),
+            ("third", Health::down("gone")),
+        ];
+        let overall = Health::worst_of(verdicts.iter().map(|(_, v)| v.clone()));
+
+        let mut rendered = overall.to_string();
+        for (name, verdict) in &verdicts {
+            rendered.push_str(&format!("\n  {name}: {verdict}"));
+        }
+
+        assert_eq!(
+            rendered,
+            "down: gone\n  first: up\n  second: degraded: slow\n  third: down: gone"
+        );
     }
 
     #[test]

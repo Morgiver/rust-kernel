@@ -22,6 +22,12 @@
 //! both cases; two names do not. Use `dispatch` when the emitter's control flow
 //! depends on the outcome, `emit` for notification.
 //!
+//! Detached is not the same as unjoinable. Every spawned walk is counted, and
+//! [`EventDispatcher::settle`] waits for the count to fall to zero — which is
+//! what the kernel awaits on the shutdown ladder, so a notification emitted
+//! just before a stop still reaches its listeners instead of dying with the
+//! runtime. [`EventDispatcher::in_flight`] reads the same count.
+//!
 //! # The table is frozen
 //!
 //! Listeners are registered in phase two and the table is built once, in phase
@@ -36,14 +42,21 @@
 
 use core::any::{Any, TypeId};
 use core::fmt;
+use core::pin::pin;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use kernel_core::telemetry::{Level, Record};
-use kernel_core::{BoxFuture, DispatchError, Event, Flow, ListenerError, Priority, Telemetry};
+use kernel_core::{
+    BoxFuture, ConfigTree, DispatchError, Event, Flow, ListenerError, NoopTelemetry, Priority,
+    Telemetry,
+};
+use tokio::sync::Notify;
 
 use crate::container::Container;
 use crate::registry::ListenerEntry;
+use crate::shutdown::KernelHandle;
 
 /// Reacts to one event type.
 ///
@@ -172,8 +185,64 @@ pub struct ListenerContext<'a> {
 
 impl<'a> ListenerContext<'a> {
     /// Borrows a context over a resolved container.
-    pub(crate) fn new(container: &'a Container) -> Self {
+    ///
+    /// This is what the dispatcher calls. A caller outside the kernel cannot
+    /// build a [`Container`] — resolution builds it, not a constructor — so
+    /// calling a listener from a test goes through
+    /// [`detached`](Self::detached), which owns one, or through
+    /// [`builder`](Self::builder) when the test needs a container of its own.
+    #[must_use]
+    pub fn new(container: &'a Container) -> Self {
         Self { container }
+    }
+
+    /// A container a listener can be called against with no kernel behind it.
+    ///
+    /// The container is empty, the configuration tree is empty and telemetry is
+    /// discarded. What it makes possible is calling
+    /// [`Listener::on_event`] at all from outside this crate: the context
+    /// borrows a container, so the caller must own one, and this is what owns
+    /// it. The same affordance [`BootContext::detached`] gives a component and
+    /// [`RunContext::detached`] gives a runnable, for the third thing a bundle
+    /// registers.
+    ///
+    /// [`BootContext::detached`]: crate::component::BootContext::detached
+    /// [`RunContext::detached`]: crate::runnable::RunContext::detached
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use kernel::core::{BoxFuture, Event, Flow, ListenerError};
+    /// # use kernel::dispatcher::{Listener, ListenerContext};
+    /// # struct Signal;
+    /// # impl Event for Signal {
+    /// #     const NAME: &'static str = "signal";
+    /// # }
+    /// # struct Watcher;
+    /// # impl Listener<Signal> for Watcher {
+    /// #     fn on_event<'a>(
+    /// #         &'a self,
+    /// #         _event: &'a mut Signal,
+    /// #         _cx: &'a ListenerContext<'a>,
+    /// #     ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+    /// #         Box::pin(async { Ok(Flow::Continue) })
+    /// #     }
+    /// # }
+    /// # async fn probe() {
+    /// let detached = ListenerContext::detached();
+    ///
+    /// Watcher.on_event(&mut Signal, &detached.context()).await.expect("handled");
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn detached() -> DetachedListen {
+        ListenBuilder::new().build()
+    }
+
+    /// The same container, with the parts a test needs to choose.
+    #[must_use]
+    pub fn builder() -> ListenBuilder {
+        ListenBuilder::new()
     }
 
     /// The resolved container.
@@ -195,6 +264,132 @@ impl<'a> ListenerContext<'a> {
 impl fmt::Debug for ListenerContext<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ListenerContext").finish_non_exhaustive()
+    }
+}
+
+/// The container a detached [`ListenerContext`] borrows.
+///
+/// It owns what the context borrows, which is what makes the context
+/// constructible outside a kernel at all. Callable as often as needed: every
+/// context reads the same container, so two listeners called from one detached
+/// set resolve the same values they would inside a kernel.
+pub struct DetachedListen {
+    container: Container,
+}
+
+impl DetachedListen {
+    /// A listener context over this container.
+    #[must_use]
+    pub fn context(&self) -> ListenerContext<'_> {
+        ListenerContext::new(&self.container)
+    }
+
+    /// The container the listener resolves through.
+    #[must_use]
+    pub fn container(&self) -> &Container {
+        &self.container
+    }
+}
+
+impl fmt::Debug for DetachedListen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DetachedListen").finish_non_exhaustive()
+    }
+}
+
+/// Chooses what a [`DetachedListen`] is made of.
+///
+/// Every part has a default that needs no kernel — an empty container, an empty
+/// configuration tree, a telemetry sink that discards — so a test names only
+/// the parts it actually reads. A listener that resolves a contract while
+/// handling its event is given the container that binds it; one that only reads
+/// its payload names nothing.
+///
+/// # Examples
+///
+/// ```
+/// use kernel::core::{ConfigNode, ConfigTree};
+/// use kernel::dispatcher::ListenerContext;
+///
+/// let mut tree = ConfigTree::empty();
+/// tree.insert("alpha.beta", ConfigNode::from(3_i64)).expect("a literal path");
+///
+/// let detached = ListenerContext::builder().with_config(tree).build();
+///
+/// assert!(detached.context().container().config().get("alpha.beta").is_some());
+/// ```
+pub struct ListenBuilder {
+    container: Option<Container>,
+    config: Arc<ConfigTree>,
+    telemetry: Arc<dyn Telemetry>,
+}
+
+impl ListenBuilder {
+    /// A builder with every default in place.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            container: None,
+            config: Arc::new(ConfigTree::empty()),
+            telemetry: Arc::new(NoopTelemetry),
+        }
+    }
+
+    /// Resolve through this container instead of an empty one.
+    ///
+    /// Its own configuration and telemetry are what the context reports, so
+    /// [`with_config`](Self::with_config) and
+    /// [`with_telemetry`](Self::with_telemetry) are ignored once a container is
+    /// given: a container carries both, and two answers to one question would
+    /// be worse than none.
+    #[must_use]
+    pub fn with_container(mut self, container: Container) -> Self {
+        self.container = Some(container);
+        self
+    }
+
+    /// Read this configuration tree, when no container is given.
+    #[must_use]
+    pub fn with_config(mut self, config: ConfigTree) -> Self {
+        self.config = Arc::new(config);
+        self
+    }
+
+    /// Report through this telemetry sink, when no container is given.
+    #[must_use]
+    pub fn with_telemetry(mut self, telemetry: Arc<dyn Telemetry>) -> Self {
+        self.telemetry = telemetry;
+        self
+    }
+
+    /// Freezes the container.
+    #[must_use]
+    pub fn build(self) -> DetachedListen {
+        let Self {
+            container,
+            config,
+            telemetry,
+        } = self;
+
+        DetachedListen {
+            container: container.unwrap_or_else(|| {
+                Container::new(Vec::new(), config, telemetry, KernelHandle::detached())
+            }),
+        }
+    }
+}
+
+impl Default for ListenBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for ListenBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ListenBuilder")
+            .field("container", &self.container.is_some())
+            .finish_non_exhaustive()
     }
 }
 
@@ -225,6 +420,64 @@ impl fmt::Debug for Slot {
     }
 }
 
+/// The detached walks that have been spawned and have not finished.
+///
+/// A spawned walk cannot be joined the ordinary way: [`EventDispatcher::emit`]
+/// takes `&self`, returns nothing, and is called from paths that keep no handle
+/// — so the walks are counted instead. The count rises on the emitting task,
+/// before the spawn, and falls when the walk's [`Ticket`] is dropped. Doing it
+/// in a `Drop` rather than at the end of the walk is what keeps the count
+/// correct for a task that unwound or was aborted, as well as for one that ran
+/// to the end.
+#[derive(Debug, Default)]
+struct Emissions {
+    /// How many walks are outstanding.
+    live: AtomicUsize,
+    /// Woken every time that count reaches zero.
+    idle: Notify,
+}
+
+impl Emissions {
+    /// Counts one walk in, and hands back what counts it out again.
+    fn enter(self: &Arc<Self>) -> Ticket {
+        self.live.fetch_add(1, Ordering::AcqRel);
+        Ticket(Arc::clone(self))
+    }
+
+    /// How many walks are outstanding right now.
+    fn live(&self) -> usize {
+        self.live.load(Ordering::Acquire)
+    }
+
+    /// Resolves once no walk is outstanding.
+    ///
+    /// The waiter is registered *before* the count is read — `enable` does that
+    /// without awaiting — so a walk that ends between the read and the wait
+    /// cannot lose the wake-up. The loop covers the other direction: a listener
+    /// that emits in turn raises the count again, and the wait resumes.
+    async fn settled(&self) {
+        loop {
+            let mut idle = pin!(self.idle.notified());
+            idle.as_mut().enable();
+            if self.live() == 0 {
+                return;
+            }
+            idle.await;
+        }
+    }
+}
+
+/// Counts one detached walk out when it is dropped.
+struct Ticket(Arc<Emissions>);
+
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        if self.0.live.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.idle.notify_waiters();
+        }
+    }
+}
+
 /// Telemetry event name for an emission that could not be delivered.
 const DROPPED: &str = "dispatcher.dropped";
 /// Telemetry event name for a listener that failed during a detached emission.
@@ -242,6 +495,7 @@ pub struct EventDispatcher {
     container: OnceLock<Container>,
     telemetry: Arc<dyn Telemetry>,
     runtime: Option<tokio::runtime::Handle>,
+    emissions: Arc<Emissions>,
 }
 
 impl EventDispatcher {
@@ -284,6 +538,7 @@ impl EventDispatcher {
             container: OnceLock::new(),
             telemetry,
             runtime: tokio::runtime::Handle::try_current().ok(),
+            emissions: Arc::default(),
         }
     }
 
@@ -346,6 +601,11 @@ impl EventDispatcher {
     /// notification that stops halfway because one subscriber is broken is
     /// worse than one that does not.
     ///
+    /// Detached is not lost. The walk is counted before it is spawned and
+    /// counted out when it ends, so [`settle`](Self::settle) can wait for it —
+    /// which is what the kernel's shutdown ladder does. Emitting and then
+    /// dropping the runtime remains lossy; emitting and then settling is not.
+    ///
     /// An event nobody listens for is silent: there is nothing to spawn, and
     /// that is checked before anything else so the same non-event never reports
     /// two different ways.
@@ -371,7 +631,11 @@ impl EventDispatcher {
         };
 
         let telemetry = Arc::clone(&self.telemetry);
+        // Taken here, on the emitting task: a caller that emits and settles
+        // without yielding in between must already see the walk it started.
+        let ticket = self.emissions.enter();
         runtime.spawn(async move {
+            let _ticket = ticket;
             let mut event = event;
             let cx = ListenerContext::new(&container);
             let erased: &mut (dyn Any + Send) = &mut event;
@@ -390,6 +654,37 @@ impl EventDispatcher {
                 }
             }
         });
+    }
+
+    /// Waits until every detached emission has finished walking its table.
+    ///
+    /// [`emit`](Self::emit) returns before its listeners have run, so a caller
+    /// that is about to tear its runtime down has no way of knowing whether
+    /// they ran at all. This is that way: it resolves when no spawned walk is
+    /// left. The kernel awaits it on the shutdown ladder, which is what makes
+    /// an event emitted just before a stop arrive rather than vanish.
+    ///
+    /// It covers the walks outstanding when it is called **and** any that start
+    /// while it waits, so a listener that emits in turn is waited for too. That
+    /// also means it is not a fence against a caller that keeps emitting: bound
+    /// it when the emitters are not under control.
+    ///
+    /// There is nothing to wait for after an emission that was dropped — no
+    /// walk was spawned — nor after [`dispatch`](Self::dispatch), which the
+    /// caller has already awaited.
+    pub async fn settle(&self) {
+        self.emissions.settled().await;
+    }
+
+    /// How many detached walks are outstanding right now.
+    ///
+    /// A sample, not a lock: it may be stale the instant it is read. It is here
+    /// for a diagnostic — "the stop gave up on two emissions" — and never as
+    /// something to spin on. Spin on [`settle`](Self::settle) instead, which
+    /// waits rather than polls.
+    #[must_use]
+    pub fn in_flight(&self) -> usize {
+        self.emissions.live()
     }
 
     /// How many listeners are registered for `E`.
@@ -430,6 +725,7 @@ impl fmt::Debug for EventDispatcher {
             .field("event_types", &self.table.len())
             .field("attached", &self.container.get().is_some())
             .field("has_runtime", &self.runtime.is_some())
+            .field("in_flight", &self.in_flight())
             .finish_non_exhaustive()
     }
 }
@@ -438,10 +734,12 @@ impl fmt::Debug for EventDispatcher {
 mod tests {
     use super::*;
 
-    use std::sync::Mutex;
+    use core::time::Duration;
+    use std::sync::{Mutex, Weak};
 
     use kernel_core::{ConfigTree, NoopTelemetry, RecordingTelemetry};
     use tokio::sync::mpsc;
+    use tokio::time::sleep;
 
     use crate::shutdown::KernelHandle;
 
@@ -536,6 +834,48 @@ mod tests {
         }
     }
 
+    /// Reports through a channel, after a delay.
+    struct Lingering {
+        mark: &'static str,
+        sender: mpsc::UnboundedSender<&'static str>,
+        delay: Duration,
+    }
+
+    impl Listener<Alpha> for Lingering {
+        fn on_event<'a>(
+            &'a self,
+            _event: &'a mut Alpha,
+            _cx: &'a ListenerContext<'a>,
+        ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+            Box::pin(async move {
+                sleep(self.delay).await;
+                let _ = self.sender.send(self.mark);
+                Ok(Flow::Continue)
+            })
+        }
+    }
+
+    /// Emits an event of its own, which is a walk started from inside a walk.
+    ///
+    /// Weak, so the table holding the listener does not hold the dispatcher
+    /// that holds the table.
+    struct Relaying(Arc<OnceLock<Weak<EventDispatcher>>>);
+
+    impl Listener<Beta> for Relaying {
+        fn on_event<'a>(
+            &'a self,
+            _event: &'a mut Beta,
+            _cx: &'a ListenerContext<'a>,
+        ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+            Box::pin(async move {
+                if let Some(dispatcher) = self.0.get().and_then(Weak::upgrade) {
+                    dispatcher.emit(alpha());
+                }
+                Ok(Flow::Continue)
+            })
+        }
+    }
+
     /// Resolves nothing, only proves the context reaches the listener.
     struct Probing {
         seen: Mutex<bool>,
@@ -584,6 +924,7 @@ mod tests {
             event: TypeId::of::<E>(),
             event_name: E::NAME,
             bundle,
+            requires: Vec::new(),
             priority: Priority(priority),
             order,
             call: erase_listener(listener),
@@ -958,6 +1299,111 @@ mod tests {
             assert_eq!(run, 2);
             assert_eq!(marks, vec!["high", "low"]);
         }
+    }
+
+    // The gap: a walk was spawned onto a task nothing joined, so an event
+    // emitted just before a stop was lost as often as it was delivered.
+    #[tokio::test(start_paused = true)]
+    async fn settle_waits_for_walk() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let dispatcher = attached(vec![entry::<Alpha, _>(
+            Lingering {
+                mark: "late",
+                sender,
+                delay: Duration::from_secs(5),
+            },
+            "b1",
+            0,
+            0,
+        )]);
+
+        dispatcher.emit(alpha());
+
+        // Counted on the emitting task, before anything was polled.
+        assert_eq!(dispatcher.in_flight(), 1);
+        assert!(receiver.try_recv().is_err());
+
+        dispatcher.settle().await;
+
+        assert_eq!(dispatcher.in_flight(), 0);
+        assert_eq!(receiver.try_recv(), Ok("late"));
+    }
+
+    #[tokio::test]
+    async fn settle_returns_when_idle() {
+        let dispatcher = attached(vec![entry::<Alpha, _>(Marker::new("never"), "b1", 0, 0)]);
+
+        assert_eq!(dispatcher.in_flight(), 0);
+        dispatcher.settle().await;
+    }
+
+    // A dropped emission spawns no walk, so there is nothing to wait for and
+    // nothing left counted.
+    #[tokio::test]
+    async fn dropped_emit_counts_none() {
+        let telemetry = Arc::new(RecordingTelemetry::new());
+        let dispatcher = EventDispatcher::new(
+            vec![entry::<Alpha, _>(Marker::new("never"), "b1", 0, 0)],
+            telemetry.clone(),
+        );
+
+        dispatcher.emit(alpha());
+        dispatcher.settle().await;
+
+        assert_eq!(dispatcher.in_flight(), 0);
+        assert!(telemetry.contains(DROPPED));
+    }
+
+    // A listener that emits raises the count again from inside a walk, and the
+    // wait must cover the second walk as well as the first.
+    #[tokio::test(start_paused = true)]
+    async fn settle_covers_relayed_walk() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let shared: Arc<OnceLock<Weak<EventDispatcher>>> = Arc::new(OnceLock::new());
+        let dispatcher = Arc::new(attached(vec![
+            entry::<Beta, _>(Relaying(Arc::clone(&shared)), "b1", 0, 0),
+            entry::<Alpha, _>(
+                Lingering {
+                    mark: "relayed",
+                    sender,
+                    delay: Duration::from_secs(5),
+                },
+                "b2",
+                0,
+                1,
+            ),
+        ]));
+        let _ = shared.set(Arc::downgrade(&dispatcher));
+
+        dispatcher.emit(Beta);
+        dispatcher.settle().await;
+
+        assert_eq!(dispatcher.in_flight(), 0);
+        assert_eq!(receiver.try_recv(), Ok("relayed"));
+    }
+
+    // A walk that unwinds still counts itself out: the count is released by a
+    // guard, not by the last line of the walk.
+    #[tokio::test]
+    async fn panicking_walk_settles() {
+        struct Unwinding;
+
+        impl Listener<Alpha> for Unwinding {
+            fn on_event<'a>(
+                &'a self,
+                _event: &'a mut Alpha,
+                _cx: &'a ListenerContext<'a>,
+            ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+                Box::pin(async { panic!("deliberate") })
+            }
+        }
+
+        let dispatcher = attached(vec![entry::<Alpha, _>(Unwinding, "b1", 0, 0)]);
+
+        dispatcher.emit(alpha());
+        dispatcher.settle().await;
+
+        assert_eq!(dispatcher.in_flight(), 0);
     }
 
     #[tokio::test]

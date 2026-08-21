@@ -6,10 +6,10 @@
 //!
 //! # Why the event is declared here and not in the bundle
 //!
-//! [`OrderPlaced`] is emitted by the orders feature, and listened to by other
-//! features. A listener has to *name the type* to register for it: dispatch is
-//! indexed by type identity, never by a string, so there is no way to subscribe
-//! to "order.placed" without the type in hand.
+//! [`OrderProposed`] is dispatched by the orders feature, and listened to by
+//! other features. A listener has to *name the type* to register for it:
+//! dispatch is indexed by type identity, never by a string, so there is no way
+//! to subscribe to "orders.proposed" without the type in hand.
 //!
 //! If the type lived in the bundle that emits it, every listener would have to
 //! depend on that bundle — and a `*-bundle` crate is exactly what another
@@ -119,13 +119,27 @@ pub trait OrderBook: Send + Sync + 'static {
     fn placed(&self) -> BoxFuture<'_, Result<u64, OrderError>>;
 }
 
-/// An order made it into the book.
+/// An order somebody wants placed, before anybody has committed to it.
 ///
 /// Dispatched sequentially rather than emitted, so that listeners run before
-/// the emitter continues and what they leave in [`notes`](OrderPlaced::notes)
-/// travels back with the event. A listener that has nothing to add returns
-/// `Flow::Continue`; one that decides nobody else should see this event returns
-/// `Flow::Stop`, and stopping is not an error.
+/// the emitter continues and what they leave in
+/// [`notes`](OrderProposed::notes) travels back with the event. A listener that
+/// has nothing to add returns `Flow::Continue`; one that decides nobody else
+/// should see this event returns `Flow::Stop`, and stopping is not an error.
+///
+/// # Why it is a proposal and not a placement
+///
+/// This event carries no sequence number, and the absence is the design. A
+/// listener that returns `Flow::Stop` is exercising a veto, and a veto is only
+/// a veto while the thing it forbids has not happened yet: the order is
+/// dispatched, and it reaches the book only if the walk finished without one.
+/// An event named for a placement would have to carry the number the book
+/// hands out, which would mean the placement already happened and the veto had
+/// nothing left to stop.
+///
+/// So the whole vetoable moment lives before the commit, and what a listener
+/// sees is what somebody is *asking* for. Whoever commits it publishes the
+/// number afterwards, to whoever needs it.
 ///
 /// # Examples
 ///
@@ -133,31 +147,28 @@ pub trait OrderBook: Send + Sync + 'static {
 ///
 /// ```
 /// use kernel_core::Event;
-/// use orders_contracts::{Order, OrderPlaced};
+/// use orders_contracts::{Order, OrderProposed};
 ///
-/// let mut event = OrderPlaced {
+/// let mut event = OrderProposed {
 ///     order: Order::new("order-1", 250),
-///     sequence: 1,
 ///     notes: Vec::new(),
 /// };
 /// event.notes.push("audited".to_owned());
 ///
-/// assert_eq!(OrderPlaced::NAME, "orders.placed");
+/// assert_eq!(OrderProposed::NAME, "orders.proposed");
 /// assert_eq!(event.notes.len(), 1);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrderPlaced {
-    /// The order as it was placed.
+pub struct OrderProposed {
+    /// The order as it was asked for.
     pub order: Order,
-    /// Its sequence number in the book that placed it.
-    pub sequence: u64,
     /// What listeners had to say. Empty until one of them adds a line.
     pub notes: Vec<String>,
 }
 
-impl Event for OrderPlaced {
+impl Event for OrderProposed {
     /// Diagnostics only: dispatch routes on the type, never on this string.
-    const NAME: &'static str = "orders.placed";
+    const NAME: &'static str = "orders.proposed";
 }
 
 #[cfg(test)]
@@ -201,15 +212,14 @@ mod tests {
 
     #[test]
     fn listeners_leave_notes() {
-        let mut event = OrderPlaced {
+        let mut event = OrderProposed {
             order: Order::new("order-1", 250),
-            sequence: 7,
             notes: Vec::new(),
         };
 
         event.notes.push("audited".to_owned());
 
-        assert_eq!(event.sequence, 7);
+        assert_eq!(event.order.reference, "order-1");
         assert_eq!(event.notes, ["audited"]);
     }
 

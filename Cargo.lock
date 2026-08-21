@@ -133,6 +133,7 @@ dependencies = [
  "audit-contracts",
  "kernel",
  "kernel-core",
+ "kernel-testkit",
  "ledger-contracts",
  "orders-contracts",
  "tokio",

@@ -597,6 +597,32 @@ pub enum ResolveError {
         /// The contested name.
         name: &'static str,
     },
+    /// Something that is not scoped requires something that is.
+    ///
+    /// A value that is not built per scope is built where there is no scope, so
+    /// a scoped requirement it states can never be satisfied: the resolution
+    /// that would satisfy it has no scope to be built in. That holds for a
+    /// `Shared` binding, for a `Factory` one, and for a listener, which binds
+    /// nothing at all and resolves during dispatch — outside every scope by
+    /// construction.
+    ///
+    /// Every fact the check needs — the lifetime of each binding and the
+    /// requirement between them — is declared, so this is a statement about the
+    /// graph and not about a build that failed.
+    LifetimeConflict {
+        /// What states the requirement: a binding's contract type, or the event
+        /// a listener handles.
+        ///
+        /// A string rather than a [`ContractRef`], for the same reason
+        /// [`MissingContract`](Self::MissingContract) uses one: a listener
+        /// binds no contract, and the event it handles is the only identity it
+        /// declares.
+        required_by: &'static str,
+        /// The scoped contract it requires.
+        requires: ContractRef,
+        /// The bundle that registered the requirer.
+        bundle: &'static str,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -667,6 +693,15 @@ impl fmt::Display for ResolveError {
             ),
             Self::DuplicateBundle { name } => {
                 write!(f, "duplicate bundle `{name}`: registered more than once")
+            }
+            Self::LifetimeConflict {
+                required_by,
+                requires,
+                bundle,
+            } => {
+                write!(f, "`{required_by}` is not scoped and requires scoped ")?;
+                write_contract(f, requires)?;
+                write!(f, ", declared by `{bundle}`")
             }
         }
     }
@@ -1041,6 +1076,23 @@ mod tests {
             error.to_string(),
             "duplicate bundle `alpha`: registered more than once"
         );
+    }
+
+    #[test]
+    fn lifetime_conflict_display() {
+        let error = ResolveError::LifetimeConflict {
+            required_by: "alpha.started",
+            requires: ContractRef::named::<B>("primary"),
+            bundle: "alpha",
+        };
+        let rendered = error.to_string();
+        assert!(
+            rendered.starts_with("`alpha.started` is not scoped"),
+            "{rendered}"
+        );
+        assert!(rendered.contains(" requires scoped "), "{rendered}");
+        assert!(rendered.contains("#primary"), "{rendered}");
+        assert!(rendered.ends_with("declared by `alpha`"), "{rendered}");
     }
 
     #[test]

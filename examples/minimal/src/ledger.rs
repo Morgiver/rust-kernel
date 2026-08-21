@@ -23,7 +23,6 @@ use kernel::{
 };
 
 use crate::contracts::{Ledger, OpeningNote};
-use crate::settings::field;
 
 /// The name this bundle publishes, and the name every diagnostic blames.
 const NAME: &str = "ledger";
@@ -41,7 +40,7 @@ struct Settings {
 impl FromConfig for Settings {
     fn from_config(node: &ConfigNode) -> Result<Self, ConfigError> {
         Ok(Self {
-            capacity: field(node, "capacity")?,
+            capacity: node.field("capacity")?,
         })
     }
 }

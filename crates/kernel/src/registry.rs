@@ -26,13 +26,12 @@
 
 use core::any::TypeId;
 use core::fmt;
+use core::marker::PhantomData;
 use std::sync::Arc;
 
-use kernel_core::error::ConfigErrorKind;
 use kernel_core::{
-    BoxFuture, BuildError, ConfigError, ConfigNode, ConfigTree, ContainerError, ContractId,
-    ContractRef, Event, Extension, ExtensionId, FromConfig, Level, Lifetime, Priority, Record,
-    Scalar, Telemetry,
+    BoxFuture, BuildError, ConfigError, ConfigTree, ContainerError, ContractId, ContractRef, Event,
+    Extension, ExtensionId, FromConfig, Level, Lifetime, Priority, Record, Telemetry,
 };
 
 use crate::component::Component;
@@ -47,11 +46,6 @@ use crate::runnable::Runnable;
 /// Only reachable when a registry is driven directly rather than by the
 /// kernel, which always calls [`Registry::enter_bundle`] first.
 const UNATTRIBUTED: &str = "<unattributed>";
-
-/// An empty section, so that an absent prefix can still be offered to
-/// [`FromConfig`] — which is how `Option<T>` reads as `None` rather than as a
-/// failure.
-static ABSENT: ConfigNode = ConfigNode::Scalar(Scalar::Null);
 
 /// Resolves a lifecycle-managed unit through the binding it was recorded with.
 ///
@@ -101,6 +95,13 @@ pub(crate) struct ListenerEntry {
     pub event_name: &'static str,
     /// The bundle that registered it.
     pub bundle: &'static str,
+    /// The contracts this listener resolves while handling the event.
+    ///
+    /// Declared through [`Listening::requires`], and checked by phase three
+    /// exactly as a provider's are. Nothing can read them off the listener
+    /// itself, so an undeclared resolution is a resolution phase three never
+    /// sees.
+    pub requires: Vec<ContractRef>,
     /// Higher runs first; ties break on `order`.
     pub priority: Priority,
     /// Registration rank across the whole registry.
@@ -114,6 +115,7 @@ impl fmt::Debug for ListenerEntry {
         f.debug_struct("ListenerEntry")
             .field("event_name", &self.event_name)
             .field("bundle", &self.bundle)
+            .field("requires", &self.requires)
             .field("priority", &self.priority)
             .field("order", &self.order)
             .finish_non_exhaustive()
@@ -203,6 +205,14 @@ impl fmt::Debug for RegistryParts {
 /// what this list says they are — and it is taken as one, not merged as an
 /// addition. Whatever the eighth verb would have recorded is a bundle's
 /// business, reachable through a contract like everything else.
+///
+/// The list is the BUNDLE-facing surface, and the closure is about what a
+/// bundle can do. A test assembling a graph reaches four replacement
+/// affordances that no bundle can: they are `#[doc(hidden)]`, gated by the
+/// `testing` feature `ci/check-testing-feature.sh` refuses on every non-dev
+/// dependency edge, and reachable only from the hook that runs after every
+/// bundle has registered. They add no kind of thing to the kernel — they
+/// overwrite one of these seven — so they are not an eighth verb.
 ///
 /// Two read-only accessors sit alongside them —
 /// [`config`](Self::config) and [`telemetry`](Self::telemetry). They record
@@ -363,18 +373,61 @@ impl Registry {
     /// phase three and is immutable afterwards: this is the only moment at
     /// which a listener can be added, and there is no dynamic counterpart.
     ///
-    /// The listener is stored with its event type erased, which is why it
-    /// returns nothing — there is no binding to adjust.
-    pub fn listen<E: Event, L: Listener<E>>(&mut self, listener: L, priority: Priority) {
+    /// A listener that resolves anything from the container while handling its
+    /// event declares it on the returned [`Listening`]. That declaration is
+    /// what phase three checks, and it is the only way a listener's needs can
+    /// be checked at all: the listener is stored with its event type erased,
+    /// and nothing can look inside it to see what it will ask for. A listener
+    /// that resolves nothing declares nothing and ignores the handle.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kernel::core::{ContractRef, Priority};
+    /// # use kernel::core::{BoxFuture, Event, Flow, ListenerError};
+    /// # use kernel::dispatcher::{Listener, ListenerContext};
+    /// # use kernel::Registry;
+    /// # trait Sink: Send + Sync + 'static {}
+    /// # struct Signal;
+    /// # impl Event for Signal {
+    /// #     const NAME: &'static str = "signal";
+    /// # }
+    /// # struct Watcher;
+    /// # impl Listener<Signal> for Watcher {
+    /// #     fn on_event<'a>(
+    /// #         &'a self,
+    /// #         _event: &'a mut Signal,
+    /// #         _cx: &'a ListenerContext<'a>,
+    /// #     ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+    /// #         Box::pin(async { Ok(Flow::Continue) })
+    /// #     }
+    /// # }
+    /// # fn example(registry: &mut Registry) {
+    /// registry
+    ///     .listen(Watcher, Priority::NORMAL)
+    ///     .requires([ContractRef::of::<dyn Sink>()]);
+    /// # }
+    /// ```
+    pub fn listen<E: Event, L: Listener<E>>(
+        &mut self,
+        listener: L,
+        priority: Priority,
+    ) -> Listening<'_, E> {
         let order = self.next_rank();
         self.listeners.push(ListenerEntry {
             event: TypeId::of::<E>(),
             event_name: E::NAME,
             bundle: self.bundle,
+            requires: Vec::new(),
             priority,
             order,
             call: erase_listener::<E, L>(listener),
         });
+        let entry = self
+            .listeners
+            .last_mut()
+            .expect("a listener was recorded immediately before this call");
+        Listening::new(&mut entry.requires)
     }
 
     /// Opens an extension point of type `X`.
@@ -406,6 +459,121 @@ impl Registry {
     }
 
     // ----------------------------------------------------------------------
+    // Replacement — not a verb, and not bundle-facing
+    // ----------------------------------------------------------------------
+
+    /// Replaces the binding recorded for `C`, or records one if there is none.
+    ///
+    /// Not public API, and not an eighth verb: the closed list above is the
+    /// BUNDLE-facing surface, and none of these four is reachable from a
+    /// bundle. They exist under the `testing` feature, which
+    /// `ci/check-testing-feature.sh` refuses on every non-dev dependency edge,
+    /// and they are reached from the hook that runs after every bundle has
+    /// registered and before phase three — which is what keeps a replacement
+    /// in the phase order and in front of the graph validation.
+    ///
+    /// A bundle cannot replace anything, and that is the rule this does not
+    /// touch: two bundles claiming one contract is still an ambiguity phase
+    /// three reports. Replacement is the assembler's word over the assembly,
+    /// and only a test assembles this way.
+    ///
+    /// The replacement takes the place of what it replaced — the same
+    /// registration rank, the same default position, the same name — so the
+    /// boot order a graph had is the boot order it keeps. What changes is the
+    /// bundle it is attributed to, the lifetime, the declared requirements and
+    /// the build.
+    ///
+    /// Matching is on the contract id, name included: a binding recorded under
+    /// a name is replaced by [`__replace_named`](Self::__replace_named) and
+    /// never by this, even when it claimed the default position.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn __replace<C: ?Sized + Send + Sync + 'static>(&mut self, provider: Provider<C>) {
+        self.replace_binding(ContractId::of::<C>(), ContractRef::of::<C>(), provider);
+    }
+
+    /// Replaces the binding recorded for `C` under `name`, or records one.
+    ///
+    /// See [`__replace`](Self::__replace) for what replacement means and why
+    /// it is not a verb.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn __replace_named<C: ?Sized + Send + Sync + 'static>(
+        &mut self,
+        name: &'static str,
+        provider: Provider<C>,
+    ) {
+        self.replace_binding(
+            ContractId::named::<C>(name),
+            ContractRef::named::<C>(name),
+            provider,
+        );
+    }
+
+    /// Replaces the component recorded for `T`, or records one.
+    ///
+    /// Both halves of what [`component`](Self::component) records are covered:
+    /// the binding the container resolves and the entry the kernel boots. A
+    /// `T` that was bound but never registered as a component gains the entry
+    /// here, so the double is driven whatever the graph did before it.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn __replace_component<T: Component>(&mut self, provider: Provider<T>) {
+        let provider = self.force_shared(T::name(), provider);
+        let contract = ContractId::of::<T>();
+        self.replace_binding(contract, ContractRef::of::<T>(), provider);
+
+        let bundle = self.bundle;
+        if let Some(entry) = self
+            .components
+            .iter_mut()
+            .find(|entry| entry.contract == contract)
+        {
+            entry.bundle = bundle;
+            return;
+        }
+        let order = self.next_rank();
+        self.components.push(UnitEntry {
+            name: T::name(),
+            bundle,
+            contract,
+            order,
+            build: Arc::new(resolve_component::<T>),
+        });
+    }
+
+    /// Replaces the runnable recorded for `T`, or records one.
+    ///
+    /// The counterpart of
+    /// [`__replace_component`](Self::__replace_component) for the other unit
+    /// the kernel drives.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn __replace_runnable<T: Runnable>(&mut self, provider: Provider<T>) {
+        let provider = self.force_shared(T::name(), provider);
+        let contract = ContractId::of::<T>();
+        self.replace_binding(contract, ContractRef::of::<T>(), provider);
+
+        let bundle = self.bundle;
+        if let Some(entry) = self
+            .runnables
+            .iter_mut()
+            .find(|entry| entry.contract == contract)
+        {
+            entry.bundle = bundle;
+            return;
+        }
+        let order = self.next_rank();
+        self.runnables.push(UnitEntry {
+            name: T::name(),
+            bundle,
+            contract,
+            order,
+            build: Arc::new(resolve_runnable::<T>),
+        });
+    }
+
+    // ----------------------------------------------------------------------
     // The two accessors
     // ----------------------------------------------------------------------
 
@@ -415,15 +583,13 @@ impl Registry {
     /// tree is frozen before phase two starts, so this answers the same thing
     /// however often it is called.
     ///
-    /// An absent section is [`ConfigErrorKind::Missing`] naming `prefix` —
+    /// An absent section is [`Missing`](kernel_core::error::ConfigErrorKind::Missing)
+    /// naming `prefix` —
     /// except for a type that accepts absence, such as `Option<T>`, which
     /// reads as `None`. Errors from inside the section are re-rooted under
     /// `prefix`, so the path in the error is the path in the file.
     pub fn config<T: FromConfig>(&self, prefix: &str) -> Result<T, ConfigError> {
-        match self.config.get(prefix) {
-            Some(node) => T::from_config(node).map_err(|error| under(prefix, error)),
-            None => T::from_config(&ABSENT).map_err(|_| ConfigError::missing(prefix)),
-        }
+        self.config.root().field(prefix)
     }
 
     /// The telemetry sink every unit reports through.
@@ -511,6 +677,29 @@ impl Registry {
         });
     }
 
+    /// Overwrites the binding recorded under `id`, or records one.
+    ///
+    /// `is_default` and `order` survive: a replacement stands where what it
+    /// replaced stood, so a graph that resolved in one order still does.
+    #[cfg(feature = "testing")]
+    fn replace_binding<C: ?Sized + Send + Sync + 'static>(
+        &mut self,
+        id: ContractId,
+        contract: ContractRef,
+        provider: Provider<C>,
+    ) {
+        let bundle = self.bundle;
+        if let Some(entry) = self.bindings.iter_mut().find(|entry| entry.id == id) {
+            entry.bundle = bundle;
+            entry.lifetime = provider.lifetime;
+            entry.requires = provider.requires;
+            entry.build = erase_build(provider.build);
+            return;
+        }
+        let order = self.next_rank();
+        self.push_binding(id, contract, provider, order);
+    }
+
     /// A handle on the binding just recorded.
     fn last_binding<C: ?Sized + Send + Sync + 'static>(&mut self) -> Binding<'_, C> {
         let entry = self
@@ -556,6 +745,61 @@ impl fmt::Debug for Registry {
     }
 }
 
+/// Returned by [`Registry::listen`] so the listener's needs can be declared.
+///
+/// A listener is the one registered thing whose dependencies nothing can
+/// observe: a provider hands its build the container and declares what that
+/// build resolves, while a listener resolves during dispatch, long after phase
+/// three could have checked anything. This handle is where that declaration is
+/// made, and the borrow ties it to the registry that produced it, so it cannot
+/// outlive the entry it adjusts.
+///
+/// `E` is the event the listener was registered for; the handle carries it so a
+/// declaration cannot be attached to the wrong registration.
+pub struct Listening<'r, E: Event> {
+    requires: &'r mut Vec<ContractRef>,
+    event: PhantomData<fn() -> E>,
+}
+
+impl<'r, E: Event> Listening<'r, E> {
+    /// Wraps the recorded entry's requirement list.
+    ///
+    /// [`Registry::listen`] calls this; nothing else can build a `Listening`.
+    pub(crate) fn new(requires: &'r mut Vec<ContractRef>) -> Self {
+        Self {
+            requires,
+            event: PhantomData,
+        }
+    }
+
+    /// Declares the contracts this listener resolves while handling its event.
+    ///
+    /// Phase three checks each one exactly as it checks a provider's: a
+    /// requirement nothing satisfies is a graph error reported with all the
+    /// others, before anything boots. Without the declaration the resolution is
+    /// invisible until the first event, at which point it fails on every event
+    /// and reports to telemetry alone.
+    ///
+    /// The entries are *appended*, never replaced, so a listener declared in
+    /// several steps cannot silently lose a declaration it already made.
+    ///
+    /// Not `#[must_use]`: the declaration is recorded by the call itself, and
+    /// the returned handle exists only so that a second call can chain onto it.
+    pub fn requires(self, requires: impl IntoIterator<Item = ContractRef>) -> Self {
+        self.requires.extend(requires);
+        self
+    }
+}
+
+impl<E: Event> fmt::Debug for Listening<'_, E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Listening")
+            .field("event", &E::NAME)
+            .field("requires", &self.requires)
+            .finish()
+    }
+}
+
 /// Resolves a component through its own binding.
 fn resolve_component<T: Component>(
     container: &Container,
@@ -595,36 +839,13 @@ fn failed(name: &'static str, error: ContainerError) -> BuildError {
     BuildError::new(name, Box::new(error))
 }
 
-/// Re-roots `error` under `prefix`, so a nested failure reports where it is.
-///
-/// A [`ConfigErrorKind::Source`] carries a foreign cause that cannot be
-/// rebuilt, so it passes through untouched.
-fn under(prefix: &str, error: ConfigError) -> ConfigError {
-    if prefix.is_empty() {
-        return error;
-    }
-    let path = if error.path().is_empty() {
-        prefix.to_owned()
-    } else {
-        format!("{prefix}.{}", error.path())
-    };
-    let rebuilt = match error.kind() {
-        ConfigErrorKind::Missing => Some(ConfigError::missing(path)),
-        ConfigErrorKind::TypeMismatch { expected, found } => {
-            Some(ConfigError::type_mismatch(path, expected, found))
-        }
-        ConfigErrorKind::Invalid(detail) => Some(ConfigError::invalid(path, detail.clone())),
-        ConfigErrorKind::Source(_) => None,
-    };
-    rebuilt.unwrap_or(error)
-}
-
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
+    use kernel_core::error::ConfigErrorKind;
     use kernel_core::{
-        ComponentDescriptor, ComponentError, Flow, ListenerError, NoopTelemetry,
+        ComponentDescriptor, ComponentError, ConfigNode, Flow, ListenerError, NoopTelemetry,
         RecordingTelemetry, RunError, RunnableDescriptor,
     };
 
@@ -993,6 +1214,54 @@ mod tests {
         assert_eq!(parts.listeners[0].event, TypeId::of::<Signal>());
         assert_eq!(parts.listeners[0].event_name, "signal");
         assert_eq!(parts.listeners[0].priority, Priority(7));
+        // Declaring nothing is what a listener that resolves nothing does.
+        assert!(parts.listeners[0].requires.is_empty());
+    }
+
+    // What a listener resolves is invisible to everything but this
+    // declaration: phase three checks the list, and nothing else can produce
+    // it.
+    #[test]
+    fn listener_declares_needs() {
+        let mut registry = registry();
+
+        let listening: Listening<'_, Signal> = registry.listen(Watcher, Priority(0));
+        listening
+            .requires([ContractRef::of::<dyn Surface>()])
+            .requires([ContractRef::named::<dyn Surface>("secondary")]);
+
+        let parts = registry.into_parts();
+        let requires = &parts.listeners[0].requires;
+        assert_eq!(requires.len(), 2);
+        assert_eq!(requires[0], ContractRef::of::<dyn Surface>());
+        assert_eq!(requires[1].name(), Some("secondary"));
+    }
+
+    #[test]
+    fn listeners_keep_own_needs() {
+        let mut registry = registry();
+
+        registry
+            .listen(Watcher, Priority(0))
+            .requires([ContractRef::of::<dyn Surface>()]);
+        registry.listen(Watcher, Priority(0));
+
+        let parts = registry.into_parts();
+        assert_eq!(parts.listeners[0].requires.len(), 1);
+        assert!(parts.listeners[1].requires.is_empty());
+    }
+
+    #[test]
+    fn listening_names_event() {
+        let mut registry = registry();
+
+        let listening = registry
+            .listen(Watcher, Priority(0))
+            .requires([ContractRef::of::<dyn Surface>()]);
+
+        let rendered = format!("{listening:?}");
+        assert!(rendered.contains("signal"), "{rendered}");
+        assert!(rendered.contains("Surface"), "{rendered}");
     }
 
     #[test]

@@ -16,10 +16,6 @@
 //! * [`orders`] — a runnable that does periodic work and returns when the
 //!   shutdown token fires, a contribution to a point it did not declare, and a
 //!   listener on a kernel lifecycle event.
-//! * [`settings`] — one helper the public surface does not offer, and which
-//!   every hand-written `FromConfig` for a struct turns out to need. Its
-//!   documentation states where the defaults live and the one error it cannot
-//!   re-root.
 //! * this file — a `main` that builds, runs, and turns the outcome into an
 //!   exit code.
 //!
@@ -50,7 +46,6 @@
 mod contracts;
 mod ledger;
 mod orders;
-mod settings;
 
 use std::process::ExitCode;
 use std::sync::Arc;

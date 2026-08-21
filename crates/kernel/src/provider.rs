@@ -8,9 +8,11 @@
 //! the declaration honest: resolving something that was never declared panics
 //! while a provider is building.
 //!
-//! Every registration verb hands back a [`Binding`], so the entry that was just
+//! Every binding verb hands back a [`Binding`], so the entry that was just
 //! recorded can still be adjusted — currently only by claiming the default
-//! position for its contract.
+//! position for its contract. [`listen`](crate::Registry::listen) binds
+//! nothing, so it hands back a [`Listening`](crate::Listening) instead, on
+//! which the adjustment is the contracts the listener will resolve.
 
 use core::fmt;
 use core::marker::PhantomData;

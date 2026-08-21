@@ -9,7 +9,11 @@ publish = false
 
 [dependencies]
 kernel = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time"] }
+# The runtime `main` awaits the kernel on, and the signal handling the kernel
+# installs. No `time`: the feed's periodic wait is
+# `Shutdown::sleep_until_draining`, which the kernel publishes, so nothing here
+# names a timer.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 
 [lints]
 workspace = true

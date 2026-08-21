@@ -93,12 +93,52 @@ impl fmt::Debug for Probe {
 }
 
 /// The health of the whole process, and of each probe that reported.
+///
+/// It renders itself: [`Health`] has a [`Display`](fmt::Display) and so does
+/// the report around it, so a consumer that wants to print one writes no loop
+/// of its own. The overall verdict is the first line and each probe an indented
+/// line under it, in contribution order.
+///
+/// # Examples
+///
+/// ```
+/// use kernel::HealthReport;
+/// use kernel::core::Health;
+///
+/// let report = HealthReport {
+///     overall: Health::degraded("a backlog"),
+///     probes: vec![("first", Health::Up), ("second", Health::degraded("a backlog"))],
+/// };
+///
+/// assert_eq!(
+///     report.to_string(),
+///     "degraded: a backlog\n  first: up\n  second: degraded: a backlog",
+/// );
+/// ```
 #[derive(Debug, Clone)]
 pub struct HealthReport {
     /// The worst verdict any probe returned.
     pub overall: Health,
     /// Each probe's name and verdict, in contribution order.
     pub probes: Vec<(&'static str, Health)>,
+}
+
+impl fmt::Display for HealthReport {
+    /// The overall verdict, then one indented line per probe.
+    ///
+    /// A report with no probe is that one line: an aggregate nobody reported
+    /// against still has a verdict, and printing nothing at all would read as a
+    /// failure to render rather than as an empty set.
+    ///
+    /// Nothing is written after the last line — a caller decides whether its
+    /// output ends in a newline, exactly as it does for every other `Display`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.overall)?;
+        for (probe, health) in &self.probes {
+            write!(f, "\n  {probe}: {health}")?;
+        }
+        Ok(())
+    }
 }
 
 /// Runs every contributed probe concurrently and folds the verdicts.
@@ -348,6 +388,30 @@ mod tests {
         assert!(started.elapsed() >= PROBE_TIMEOUT);
         assert!(started.elapsed() < PROBE_TIMEOUT * 2);
         assert!(matches!(report.overall, Health::Down { .. }));
+    }
+
+    #[tokio::test]
+    async fn display_lists_probes() {
+        let report = aggregate(&points(vec![
+            Probe::new(Fixed("one", Health::Up)),
+            Probe::new(Fixed("two", Health::degraded("slow"))),
+            Probe::new(Fixed("three", Health::down("gone"))),
+        ]))
+        .await;
+
+        assert_eq!(
+            report.to_string(),
+            "down: gone\n  one: up\n  two: degraded: slow\n  three: down: gone"
+        );
+    }
+
+    // An aggregate nobody reported against still has a verdict, and it is the
+    // whole of the rendering.
+    #[tokio::test]
+    async fn display_without_probes() {
+        let report = aggregate(&points(Vec::new())).await;
+
+        assert_eq!(report.to_string(), "up");
     }
 
     #[test]

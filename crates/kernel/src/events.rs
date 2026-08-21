@@ -94,10 +94,26 @@ pub struct Draining;
 pub struct Stopping;
 
 /// The kernel is down.
+///
+/// The three counts are three different questions, and a listener that reads
+/// only one of them reads the wrong one half the time. They are the same three
+/// the `kernel.stopped` telemetry record carries, so a listener and an operator
+/// reading that line agree.
 #[derive(Debug, Clone)]
 pub struct Stopped {
     /// How many runnables failed to return before their deadline.
     pub abandoned: usize,
+    /// How many failures the outcome carries — the ones nothing recovered from.
+    ///
+    /// Zero on every successful exit, by construction.
+    pub unhandled: usize,
+    /// Every abnormal ending of the whole run, restarts included.
+    ///
+    /// An ancillary runnable that failed and was restarted is in this total and
+    /// not in [`unhandled`](Self::unhandled): it was reported when it happened
+    /// and the kernel recovered from it. A successful exit whose last count
+    /// read non-zero here is a run that went wrong and got better.
+    pub run_failures: usize,
 }
 
 macro_rules! event {

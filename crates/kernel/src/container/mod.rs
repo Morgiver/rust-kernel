@@ -52,6 +52,7 @@ use std::sync::Arc;
 use kernel_core::{ConfigTree, ContainerError, ContractId, ContractRef, Lifetime, Telemetry};
 use tokio::sync::OnceCell;
 
+use crate::extension::ExtensionPoints;
 use crate::shutdown::KernelHandle;
 use erased::{AnyArc, ErasedBuild, restore};
 
@@ -149,6 +150,15 @@ fn cells(count: usize) -> Box<[OnceCell<AnyArc>]> {
     (0..count).map(|_| OnceCell::new()).collect()
 }
 
+/// The table a container carries until one is attached to it.
+///
+/// A point collected from it is empty, which is exactly what a container built
+/// without an assembly should report: no bundle contributed, so there is
+/// nothing to collect.
+fn no_points() -> Arc<ExtensionPoints> {
+    Arc::new(ExtensionPoints::from_parts(Vec::new(), Vec::new()))
+}
+
 /// Resolves contracts to values.
 ///
 /// Cheap to clone: every clone shares one table, one seal flag and one set of
@@ -160,6 +170,11 @@ fn cells(count: usize) -> Box<[OnceCell<AnyArc>]> {
 pub struct Container {
     shared: Arc<SharedState>,
     scope: Option<Arc<ScopeState>>,
+    /// The contributed extension points, shared by every clone of this
+    /// container. Held here rather than in [`SharedState`] because phase three
+    /// builds the container before it freezes the table, and a value attached
+    /// afterwards must not need a lock to be read.
+    extensions: Arc<ExtensionPoints>,
     #[cfg(debug_assertions)]
     frame: Option<Arc<Frame>>,
 }
@@ -187,9 +202,23 @@ impl Container {
                 handle,
             }),
             scope: None,
+            extensions: no_points(),
             #[cfg(debug_assertions)]
             frame: None,
         }
+    }
+
+    /// The same container, reporting `extensions` from now on.
+    ///
+    /// Phase three attaches the frozen table here once every bundle has
+    /// contributed. It is a builder step rather than a write into the shared
+    /// state so that attaching cannot race a read: the container that carries
+    /// the table is the one phase three hands on, and every clone taken from
+    /// it carries the same pointer.
+    #[must_use]
+    pub(crate) fn with_extensions(mut self, extensions: Arc<ExtensionPoints>) -> Self {
+        self.extensions = extensions;
+        self
     }
 
     /// The implementation of `C` bound under no name.
@@ -275,6 +304,7 @@ impl Container {
                 scope: Some(Arc::new(ScopeState {
                     values: cells(self.shared.bindings.entries.len()),
                 })),
+                extensions: Arc::clone(&self.extensions),
                 #[cfg(debug_assertions)]
                 frame: self.frame.clone(),
             },
@@ -297,6 +327,24 @@ impl Container {
     #[must_use]
     pub fn handle(&self) -> KernelHandle {
         self.shared.handle.clone()
+    }
+
+    /// The contributed extension points, in a form that outlives boot.
+    ///
+    /// [`BootContext::collect`](crate::component::BootContext::collect) hands
+    /// back borrowed items, which is right for a component that reads a point
+    /// once while it boots and wrong for one that must read it again later: a
+    /// unit that answers a health request reads the probes on every request,
+    /// long after the boot call that could have lent them is over. Cloning the
+    /// `Arc` returned here is how a component or a runnable keeps the table,
+    /// and [`aggregate`](crate::health::aggregate) is what it can then call
+    /// with it.
+    ///
+    /// A container with no assembly behind it reports an empty table: every
+    /// point collects empty, which is a valid answer and not a missing one.
+    #[must_use]
+    pub fn extensions(&self) -> &Arc<ExtensionPoints> {
+        &self.extensions
     }
 
     /// Forbid any further first instantiation of a `Shared` value.
@@ -412,6 +460,7 @@ impl Container {
         Self {
             shared: Arc::clone(&self.shared),
             scope: self.scope.clone(),
+            extensions: Arc::clone(&self.extensions),
             frame: Some(Arc::new(Frame {
                 contract: entry.contract,
                 declared: entry.requires.iter().map(ContractRef::id).collect(),
@@ -566,6 +615,29 @@ mod tests {
                 KernelHandle::detached(),
             )
         }
+    }
+
+    /// The kind of value a bundle contributes to a point.
+    struct Marker(&'static str);
+
+    impl kernel_core::Extension for Marker {}
+
+    fn marked(labels: &[&'static str]) -> Arc<ExtensionPoints> {
+        let contributions = labels
+            .iter()
+            .enumerate()
+            .map(|(order, label)| crate::registry::ContributionEntry {
+                extension: kernel_core::ExtensionId::of::<Marker>(),
+                bundle: "probe",
+                order: u32::try_from(order).expect("small"),
+                item: Box::new(Marker(label)),
+            })
+            .collect();
+
+        Arc::new(ExtensionPoints::from_parts(
+            vec![kernel_core::ExtensionId::of::<Marker>()],
+            contributions,
+        ))
     }
 
     fn surface(mark: u8) -> BuildFn<dyn Surface> {
@@ -973,6 +1045,30 @@ mod tests {
         ));
         assert!(container.get::<dyn Surface>().await.is_ok());
         assert_eq!(counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn empty_container_has_no_points() {
+        let container = Fixture::new().build();
+
+        assert!(container.extensions().collect::<Marker>().is_empty());
+        assert_eq!(container.extensions().count::<Marker>(), 0);
+    }
+
+    // The point of holding the table here rather than lending it: a clone, a
+    // scope and a build-time child all report the same contributions, so a
+    // unit that kept a container kept the table with it.
+    #[test]
+    fn points_follow_the_container() {
+        let container = Fixture::new().build().with_extensions(marked(&["one"]));
+
+        let clone = container.clone();
+        let scope = container.scope();
+
+        assert_eq!(container.extensions().count::<Marker>(), 1);
+        assert_eq!(clone.extensions().count::<Marker>(), 1);
+        assert_eq!(scope.extensions().count::<Marker>(), 1);
+        assert_eq!(scope.extensions().collect::<Marker>()[0].0, "one");
     }
 
     #[test]

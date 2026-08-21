@@ -28,12 +28,18 @@ pub mod shutdown;
 mod supervisor;
 
 pub use kernel_core as core;
+pub use kernel_core::future::{YieldNow, yield_now};
 
-pub use bundle::Bundle;
-pub use component::{BootContext, Component, ShutdownContext};
+pub use bundle::{Bundle, FnBundle};
+pub use component::{
+    BootBuilder, BootContext, Component, DetachedBoot, DetachedShutdown, ShutdownBuilder,
+    ShutdownContext,
+};
 pub use config::{ConfigChain, EnvSource, MemorySource};
 pub use container::{Container, Scope};
-pub use dispatcher::{Dispatched, EventDispatcher, Listener, ListenerContext};
+pub use dispatcher::{
+    DetachedListen, Dispatched, EventDispatcher, ListenBuilder, Listener, ListenerContext,
+};
 pub use events::{
     BootCompleted, BootStarted, BundleRegistered, ComponentBooted, Draining, GraphResolved,
     Running, ShutdownReason, ShutdownRequested, Stopped, Stopping,
@@ -42,9 +48,9 @@ pub use extension::ExtensionPoints;
 pub use health::{HealthReport, PROBE_TIMEOUT, Probe, aggregate};
 pub use kernel::{Kernel, KernelBuilder};
 pub use provider::{Binding, BuildFn, Provider};
-pub use registry::Registry;
-pub use runnable::{RunContext, Runnable};
-pub use shutdown::{KernelHandle, Shutdown, ShutdownController};
+pub use registry::{Listening, Registry};
+pub use runnable::{RunBuilder, RunContext, Runnable};
+pub use shutdown::{KernelHandle, Shutdown, ShutdownController, Tick};
 
 pub use kernel_core::{
     BoxFuture, BundleManifest, ComponentDescriptor, ContractRef, Criticality, Event, Extension,

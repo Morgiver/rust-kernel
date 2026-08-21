@@ -13,12 +13,12 @@ kernel-core = { workspace = true }
 orders-contracts = { path = "../orders-contracts" }
 ledger-contracts = { path = "../ledger-contracts" }
 audit-contracts = { path = "../audit-contracts" }
-# A runnable races the shutdown token against its own timer. The kernel offers
-# neither a timer nor a select, so a bundle that runs anything names the runtime
-# it runs on — exactly as the application does.
-tokio = { workspace = true, features = ["macros", "time"] }
+# No runtime. The desk's periodic wait is `Shutdown::sleep_until_draining`,
+# which the kernel publishes, so this bundle names no executor and no timer —
+# the `tokio` below is what runs the tests, and nothing else.
 
 [dev-dependencies]
+kernel-testkit = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }
 
 [lints]

@@ -131,11 +131,16 @@ mod tests {
     struct Held(Mutex<Vec<Record>>);
 
     impl Sink for Held {
+        /// A poisoned lock is not recovered from here, and that is the point:
+        /// recovering is only defensible when something guarantees the state
+        /// behind the lock cannot be half written, and nothing states such a
+        /// guarantee for a four-line test double. In a test, a poisoned lock
+        /// means an assertion has already failed somewhere else.
         fn write(&self, record: Record) -> BoxFuture<'_, Result<(), SinkError>> {
             Box::pin(async move {
                 self.0
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .expect("a test that panicked while holding this has already failed")
                     .push(record);
                 Ok(())
             })

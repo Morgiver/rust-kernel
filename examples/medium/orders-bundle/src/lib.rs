@@ -18,12 +18,15 @@
 //!   anything holding `Arc<dyn OrderBook>` can place an order without knowing
 //!   this crate exists.
 //! * `Desk` — a runnable that works in batches and returns when the shutdown
-//!   token fires, which is the one test every runnable owes.
+//!   token fires, which is the one test every runnable owes. Its periodic wait
+//!   is [`Shutdown::sleep_until_draining`](kernel::Shutdown::sleep_until_draining),
+//!   which is why this crate names no runtime and no timer of its own.
 //! * `Slip` — a [`Lifetime::Scoped`] binding. Each batch opens a [`Scope`],
 //!   and everything inside that batch reaches the same slip by resolving it,
 //!   with nothing threaded through the calls. That is what a scope is *for*.
-//! * Three listeners on [`OrderPlaced`] at three priorities, dispatched
-//!   sequentially, where the highest can veto.
+//! * Three listeners on [`OrderProposed`] at three priorities, dispatched
+//!   sequentially, where the highest can veto — and the veto runs *before* the
+//!   order reaches the book, which is the only order in which a veto is one.
 //! * One event of this feature's own, `BatchClosed`, emitted rather than
 //!   dispatched — and the reason that is the right choice for it.
 //! * `DeskProbe`, a health probe contributed to the point the kernel
@@ -34,7 +37,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use audit_contracts::{ARCHIVE, Record, Sink};
 use kernel::core::telemetry::{Level, Record as Diagnostic};
@@ -47,7 +50,7 @@ use kernel::{
     Scope, Stage,
 };
 use ledger_contracts::{Entry, Ledger};
-use orders_contracts::{Order, OrderBook, OrderError, OrderPlaced};
+use orders_contracts::{Order, OrderBook, OrderError, OrderProposed};
 
 /// The name this bundle publishes, and the source every record it writes is
 /// attributed to.
@@ -55,15 +58,21 @@ const NAME: &str = "orders";
 
 /// What this bundle needs someone else to provide.
 ///
-/// Two entries, not three. The third — the *unnamed* [`Sink`] the audit trail
-/// writes to — cannot be claimed here: the only place this feature resolves it
-/// is a listener, a listener declares no requirements, and a manifest entry
-/// that none of the bundle's own providers declares is a `ManifestMismatch` in
-/// phase three. So the honest manifest is the short one, and the trail's
-/// dependency is checked only when it runs.
-static REQUIRES: [ContractRef; 2] = [
+/// Three entries, and the third is the one worth explaining. The *unnamed*
+/// [`Sink`] the audit trail writes to is resolved by a listener rather than by
+/// a provider, and it is declared a second time where it is resolved: on the
+/// handle [`Registry::listen`] hands back. Phase three checks that declaration
+/// exactly as it checks a provider's, and it reads both when it checks this
+/// manifest — so a contract only a listener consumes belongs here like any
+/// other.
+///
+/// The two places state two facts about the same graph: this one is what the
+/// bundle needs, the declaration on the listener is where the resolution
+/// happens. Both are checked before anything boots.
+static REQUIRES: [ContractRef; 3] = [
     ContractRef::of::<dyn Ledger>(),
     ContractRef::named::<dyn Sink>(ARCHIVE),
+    ContractRef::of::<dyn Sink>(),
 ];
 
 /// What one order is worth, multiplied by its position in the batch.
@@ -186,18 +195,28 @@ struct Slip {
 impl Slip {
     /// Writes one line.
     fn note(&self, line: String) {
-        self.lines
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(line);
+        self.held().push(line);
     }
 
     /// Everything written so far.
     fn lines(&self) -> Vec<String> {
-        self.lines
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.held().clone()
+    }
+
+    /// The lines, whatever a previous panic did to the lock.
+    ///
+    /// The recovery is written once, here, because the argument for it is one
+    /// argument. One field sits under this lock and every mutation of it is a
+    /// single `push`, so a caller that unwound while holding the guard left a
+    /// complete list of complete lines: there is no half-written value for the
+    /// next caller to read. A working note is also not worth refusing every
+    /// later batch over.
+    ///
+    /// A lock whose state *can* be half written earns no such permission, and
+    /// the honest call there is `.expect()` — a stopped process beats a caller
+    /// acting on half a value.
+    fn held(&self) -> MutexGuard<'_, Vec<String>> {
+        self.lines.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -210,6 +229,12 @@ impl Slip {
 /// Phase three validated the binding, so a kernel that started cannot fail
 /// here; the failure is recorded rather than panicked on because a working note
 /// is not worth taking a process down for.
+///
+/// `None` is a *finding*, not a shrug. Every caller acts on it: a batch that
+/// cannot reach its slip produces nothing and writes nothing down, so it ends
+/// the run rather than answering that it went fine. Recording and then
+/// reporting success would leave a desk counting empty batches and a health
+/// probe grading the silence [`Health::Up`].
 async fn slip_of(scope: &Scope, cx: &RunContext) -> Option<Arc<Slip>> {
     match scope.get::<Slip>().await {
         Ok(slip) => Some(slip),
@@ -251,25 +276,31 @@ impl Event for BatchClosed {
 // Listeners
 // ---------------------------------------------------------------------------
 
-/// Refuses to let an order over the cap be announced.
+/// Refuses to let an order over the cap be placed.
 ///
 /// Registered at [`Priority::HIGH`], so it runs first and its veto is what the
 /// two listeners below never see. Returning [`Flow::Stop`] is not an error: the
 /// emitter gets a successful [`Dispatched`](kernel::Dispatched) whose `stopped`
 /// flag says a decision was taken.
 ///
+/// The veto works because [`Desk::offer`] dispatches *before* it calls the
+/// book. Were the order committed first, this listener would still return
+/// `Flow::Stop` and the emitter would still read `stopped` — and the order
+/// would be in the ledger regardless, described as held. The order of the two
+/// calls is the whole of what makes this a veto.
+///
 /// The note it leaves on the event travels back to the emitter, because
 /// sequential dispatch hands the listener `&mut` and the emitter still owns the
 /// event afterwards. That is the half of `dispatch` an `emit` cannot do.
 struct Screen {
-    /// The largest order that may be announced.
+    /// The largest order that may be placed.
     cap: i64,
 }
 
-impl Listener<OrderPlaced> for Screen {
+impl Listener<OrderProposed> for Screen {
     fn on_event<'a>(
         &'a self,
-        event: &'a mut OrderPlaced,
+        event: &'a mut OrderProposed,
         _cx: &'a ListenerContext<'a>,
     ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
         Box::pin(async move {
@@ -285,40 +316,56 @@ impl Listener<OrderPlaced> for Screen {
     }
 }
 
-/// Adds the sequence number to the event, for whoever reads it next.
+/// Numbers the proposals this feature has screened, and says so on the event.
 ///
 /// [`Priority::NORMAL`]: after the screen, before the trail. It exists to show
-/// that a veto stops *everything* below it, not merely the last listener.
-struct Stamp;
+/// that a veto stops *everything* below it, not merely the last listener — an
+/// order the screen held carries no stamp, which is checked.
+///
+/// The number is the listener's own count of what it has seen, not the book's
+/// sequence number: nothing has been committed yet at this point in the walk,
+/// so there is no sequence number to read.
+#[derive(Debug, Default)]
+struct Stamp {
+    /// How many proposals have reached this listener.
+    seen: AtomicU64,
+}
 
-impl Listener<OrderPlaced> for Stamp {
+impl Listener<OrderProposed> for Stamp {
     fn on_event<'a>(
         &'a self,
-        event: &'a mut OrderPlaced,
+        event: &'a mut OrderProposed,
         _cx: &'a ListenerContext<'a>,
     ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
         Box::pin(async move {
-            event.notes.push(format!("stamped #{}", event.sequence));
+            let seen = self.seen.fetch_add(1, Ordering::Relaxed) + 1;
+            event.notes.push(format!("stamped #{seen}"));
             Ok(Flow::Continue)
         })
     }
 }
 
-/// Writes every announced order to the audit trail.
+/// Writes every order that cleared the screen to the audit trail.
 ///
 /// [`Priority::LOW`], so it sees the notes both listeners above it left. It
 /// resolves `Arc<dyn Sink>` from the container it is handed rather than holding
 /// one, because a listener is registered in phase two, when nothing is built
-/// yet.
+/// yet — and that resolution is declared on the handle `Registry::listen`
+/// returns, which is what puts it in front of phase three.
 ///
 /// It asks for the *default* binding: this caller wants a sink and does not
 /// care which one the audit feature made default.
+///
+/// What it records is a decision, not a placement: the walk it is part of runs
+/// before the book is called, so the line says the order was *proposed* and
+/// nobody objected. Whether the commit that follows succeeds is written on the
+/// batch's slip, by the caller that made it.
 struct Trail;
 
-impl Listener<OrderPlaced> for Trail {
+impl Listener<OrderProposed> for Trail {
     fn on_event<'a>(
         &'a self,
-        event: &'a mut OrderPlaced,
+        event: &'a mut OrderProposed,
         cx: &'a ListenerContext<'a>,
     ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
         Box::pin(async move {
@@ -326,19 +373,19 @@ impl Listener<OrderPlaced> for Trail {
                 .container()
                 .get::<dyn Sink>()
                 .await
-                .map_err(|error| ListenerError::new(OrderPlaced::NAME, Box::new(error)))?;
+                .map_err(|error| ListenerError::new(OrderProposed::NAME, Box::new(error)))?;
 
             sink.write(Record::new(
                 NAME,
                 format!(
-                    "placed {} for {} [{}]",
+                    "proposed {} for {} [{}]",
                     event.order.reference,
                     event.order.amount,
                     event.notes.join(", ")
                 ),
             ))
             .await
-            .map_err(|error| ListenerError::new(OrderPlaced::NAME, Box::new(error)))?;
+            .map_err(|error| ListenerError::new(OrderProposed::NAME, Box::new(error)))?;
 
             Ok(Flow::Continue)
         })
@@ -434,7 +481,7 @@ impl HealthProbe for DeskProbe {
 // The runnable
 // ---------------------------------------------------------------------------
 
-/// Places a batch of orders every `every`, until it is asked to stop or until
+/// Offers a batch of orders every `every`, until it is asked to stop or until
 /// the book turns out to be unusable.
 struct Desk {
     /// Where orders go. The contract, resolved — not [`Book`], which this
@@ -466,24 +513,31 @@ impl Runnable for Desk {
     fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
         Box::pin(async move {
             loop {
-                // The token wins the race. A loop that only slept would be
+                // The wait the kernel publishes, not a race between a timer and
+                // the token written out here. A loop that only slept would be
                 // abandoned at its deadline instead of returning, and the run
                 // would be counted a dirty stop.
                 //
                 // `draining` is the stage this runnable cares about: it means
                 // stop taking new work, and a batch is new work. What it holds
                 // when the stage moves is at most one batch, and `batch`
-                // abandons that one on `stopping`.
-                tokio::select! {
-                    () = cx.shutdown().draining() => break,
-                    () = tokio::time::sleep(self.every) => {}
+                // abandons that one on `stopping`. A tick that did not elapse
+                // is the ladder moving, which is the only other way this wait
+                // can end.
+                if !cx
+                    .shutdown()
+                    .sleep_until_draining(self.every)
+                    .await
+                    .is_elapsed()
+                {
+                    break;
                 }
 
                 if !self.batch(&cx).await {
-                    // A real condition, not a timer: the book cannot place
-                    // anything at all, so this process would only be pretending
-                    // to work. Asking through the handle is how any unit
-                    // requests a stop — it does not drive one.
+                    // A real condition, not a timer: the desk cannot do its
+                    // work at all, so this process would only be pretending to
+                    // work. Asking through the handle is how any unit requests
+                    // a stop — it does not drive one.
                     cx.handle().shutdown();
                     break;
                 }
@@ -495,21 +549,43 @@ impl Runnable for Desk {
     }
 }
 
+/// What one offered order does to the run it is part of.
+///
+/// Three answers because there are three, and a `bool` would have to pick two
+/// of them. Every caller of [`Desk::offer`] has to decide what to do next, and
+/// this is the decision rather than a status the caller re-derives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Screened, and committed unless a listener held it. The batch goes on.
+    Continue,
+    /// This batch ends and the desk stays: the book refused once, or the walk
+    /// did not finish, and neither is a verdict on the process.
+    EndBatch,
+    /// Nothing left to stay up for: the book refuses everything, or the scoped
+    /// binding each batch is written on cannot be resolved.
+    EndRun,
+}
+
 impl Desk {
     /// One unit of work: one scope, one slip, `batch` orders.
     ///
-    /// Answers `false` when the book has refused so often that there is nothing
-    /// left to stay up for.
+    /// Answers `false` when there is nothing left to stay up for — see
+    /// [`Step::EndRun`]. It never answers `true` for a batch that did nothing:
+    /// a batch whose slip cannot be resolved writes no line and produces no
+    /// order, and reporting that as a batch that went fine is how a broken
+    /// graph reaches an operator as a healthy one.
     async fn batch(&self, cx: &RunContext) -> bool {
         // The unit of work. Everything `Scoped` resolved inside it is built
         // once and shared until this function returns; the next batch opens a
         // scope of its own and gets its own.
         let scope = cx.container().scope();
-        self.tally.batches.fetch_add(1, Ordering::Relaxed);
 
+        // Resolved before the batch is counted. Counting first would put a
+        // batch that never happened in the tally the health probe reads.
         let Some(slip) = slip_of(&scope, cx).await else {
-            return true;
+            return false;
         };
+        self.tally.batches.fetch_add(1, Ordering::Relaxed);
         let number = slip.id;
 
         for index in 0..self.batch {
@@ -524,18 +600,10 @@ impl Desk {
                 AMOUNT * i64::from(index + 1),
             );
 
-            match self.book.place(order.clone()).await {
-                Ok(sequence) => self.announce(&scope, cx, order, sequence).await,
-                Err(error) => {
-                    let refused = self.tally.refused.fetch_add(1, Ordering::Relaxed) + 1;
-                    slip.note(format!("refused: {error}"));
-                    if refused >= GIVE_UP {
-                        return false;
-                    }
-                    // One refusal is not a verdict. Give the batch up, keep the
-                    // desk.
-                    break;
-                }
+            match self.offer(&scope, cx, order).await {
+                Step::Continue => {}
+                Step::EndBatch => break,
+                Step::EndRun => return false,
             }
         }
 
@@ -555,42 +623,86 @@ impl Desk {
         true
     }
 
-    /// Announces one placed order, sequentially, and acts on the answer.
+    /// Offers one order for screening, and commits it if nobody objected.
     ///
-    /// This is `dispatch` because the emitter's control flow depends on the
-    /// walk: a veto by the screen is what makes the order *held* rather than
-    /// placed, and the notes the listeners leave come back on the event.
-    async fn announce(&self, scope: &Scope, cx: &RunContext, order: Order, sequence: u64) {
-        let mut event = OrderPlaced {
+    /// # The order of these two calls is the whole method
+    ///
+    /// The dispatch happens **first**, and the book is called **after** it, and
+    /// only when the walk finished without a veto. Reverse them and every line
+    /// below still runs, every counter still moves and the emitter still reads
+    /// `walk.stopped` — but the entry is in the ledger before the listener that
+    /// was supposed to forbid it ever ran, and what the code calls "held" is an
+    /// order that was placed and then described. A veto only vetoes while the
+    /// thing it forbids has not happened yet.
+    ///
+    /// That is not a detail of this example. The same shape is a payment taken
+    /// before the fraud check answers, a quota spent before the limit is read,
+    /// a message sent before the approval. If the effect is irreversible — and
+    /// a committed ledger entry is — then dispatching afterwards buys nothing
+    /// except a record of an objection nobody could act on.
+    ///
+    /// This is `dispatch` and not `emit` for the same reason: `emit` returns
+    /// before any listener has run, so the commit would race the veto rather
+    /// than wait for it.
+    async fn offer(&self, scope: &Scope, cx: &RunContext, order: Order) -> Step {
+        let mut event = OrderProposed {
             order,
-            sequence,
             notes: Vec::new(),
         };
 
-        let line = match cx.dispatcher().dispatch(&mut event).await {
+        let (line, step) = match cx.dispatcher().dispatch(&mut event).await {
+            // Vetoed. The book is not called, so nothing is committed and
+            // `held` means what it says.
             Ok(walk) if walk.stopped => {
                 self.tally.held.fetch_add(1, Ordering::Relaxed);
-                format!("held {}: {}", event.order.reference, event.notes.join(", "))
-            }
-            Ok(_) => {
-                self.tally.placed.fetch_add(1, Ordering::Relaxed);
-                format!(
-                    "placed {}: {}",
-                    event.order.reference,
-                    event.notes.join(", ")
+                (
+                    format!("held {}: {}", event.order.reference, event.notes.join(", ")),
+                    Step::Continue,
                 )
             }
-            // A listener failed. The order is already in the book and a broken
-            // subscriber does not un-place it, so this is written down and the
-            // batch continues.
-            Err(error) => format!("announcement failed for {}: {error}", event.order.reference),
+            // The walk finished and nobody objected. Now, and only now.
+            Ok(_) => match self.book.place(event.order.clone()).await {
+                Ok(sequence) => {
+                    self.tally.placed.fetch_add(1, Ordering::Relaxed);
+                    (
+                        format!(
+                            "placed {} as #{sequence}: {}",
+                            event.order.reference,
+                            event.notes.join(", ")
+                        ),
+                        Step::Continue,
+                    )
+                }
+                Err(error) => {
+                    let refused = self.tally.refused.fetch_add(1, Ordering::Relaxed) + 1;
+                    let step = if refused >= GIVE_UP {
+                        Step::EndRun
+                    } else {
+                        // One refusal is not a verdict. Give the batch up,
+                        // keep the desk.
+                        Step::EndBatch
+                    };
+                    (format!("refused {}: {error}", event.order.reference), step)
+                }
+            },
+            // A listener failed, so the screening did not finish. Nothing is
+            // committed: this caller does not know whether the order was
+            // allowed, and committing on "we never found out" is the same
+            // defect the ordering above exists to avoid.
+            Err(error) => (
+                format!("screening failed for {}: {error}", event.order.reference),
+                Step::EndBatch,
+            ),
         };
 
         // The slip is reached through the scope, not through an argument. That
-        // is what a scope is for.
-        if let Some(slip) = slip_of(scope, cx).await {
-            slip.note(line);
-        }
+        // is what a scope is for — and a scope that stops answering mid-batch
+        // is a broken graph, not a line to skip.
+        let Some(slip) = slip_of(scope, cx).await else {
+            return Step::EndRun;
+        };
+        slip.note(line);
+        step
     }
 
     /// Writes one closing record to the archive.
@@ -683,11 +795,21 @@ impl Bundle for Bundled {
         // once in phase three and never changes; the order below is the order
         // they will run in, on every run of this program.
         registry.listen(Screen { cap: settings.cap }, Priority::HIGH);
-        registry.listen(Stamp, Priority::NORMAL);
-        registry.listen(Trail, Priority::LOW);
+        registry.listen(Stamp::default(), Priority::NORMAL);
+
+        // The two listeners that resolve something say so. A listener is the
+        // one registered thing whose needs nothing can observe — it resolves
+        // during dispatch, long after phase three could have looked — so this
+        // declaration is the only way the graph is checked for them. Without
+        // it the resolution fails on every event and reaches telemetry alone.
+        registry
+            .listen(Trail, Priority::LOW)
+            .requires([ContractRef::of::<dyn Sink>()]);
 
         // The feature's own event, and the only listener for it.
-        registry.listen(Summary, Priority::NORMAL);
+        registry
+            .listen(Summary, Priority::NORMAL)
+            .requires([ContractRef::of::<dyn Sink>()]);
 
         let tally = Arc::new(Tally::default());
 
@@ -735,8 +857,10 @@ impl Bundle for Bundled {
 
 #[cfg(test)]
 mod tests {
+    use kernel::core::telemetry::{RecordingTelemetry, Telemetry};
     use kernel::core::{ConfigNode, ConfigTree, Outcome, ShutdownPolicy};
     use kernel::{Kernel, KernelHandle, MemorySource, ShutdownController};
+    use kernel_testkit::{FnBundle, Recorder};
     use ledger_contracts::LedgerError;
 
     use super::*;
@@ -746,9 +870,14 @@ mod tests {
     /// It stands in for the whole ledger feature. Writing it is what the
     /// missing-contract list from phase three asks for, and it names no type of
     /// `ledger-bundle` — there is none to name.
+    ///
+    /// What it keeps, it keeps in a [`Recorder`]: the shared, poison-tolerant
+    /// log every recording double used to write out by hand. The double is
+    /// still written here, because only a crate that can name [`Ledger`] can
+    /// implement it — what the testkit ships is the part underneath.
     struct Notebook {
         /// What has been appended.
-        entries: Mutex<Vec<Entry>>,
+        entries: Recorder<Entry>,
         /// How many entries this ledger accepts before closing.
         open_for: u64,
     }
@@ -757,15 +886,23 @@ mod tests {
         /// A ledger that closes after `open_for` entries.
         fn new(open_for: u64) -> Arc<Self> {
             Arc::new(Self {
-                entries: Mutex::new(Vec::new()),
+                entries: Recorder::new(),
                 open_for,
             })
         }
 
         /// How many entries it holds.
         fn len(&self) -> u64 {
-            let held = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-            u64::try_from(held.len()).unwrap_or(u64::MAX)
+            u64::try_from(self.entries.len()).unwrap_or(u64::MAX)
+        }
+
+        /// What every entry is worth, in arrival order.
+        fn amounts(&self) -> Vec<i64> {
+            self.entries
+                .items()
+                .iter()
+                .map(|entry| entry.amount)
+                .collect()
         }
     }
 
@@ -775,10 +912,7 @@ mod tests {
                 if self.len() >= self.open_for {
                     return Err(LedgerError::Closed);
                 }
-                self.entries
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push(entry);
+                self.entries.record(entry);
                 Ok(self.len())
             })
         }
@@ -790,36 +924,32 @@ mod tests {
 
     /// A sink that keeps what it is given.
     #[derive(Default)]
-    struct Recorder(Mutex<Vec<Record>>);
+    struct Paper(Recorder<Record>);
 
-    impl Recorder {
+    impl Paper {
         /// Every message written so far, in order.
         fn messages(&self) -> Vec<String> {
             self.0
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
+                .items()
                 .iter()
                 .map(|record| record.message.clone())
                 .collect()
         }
 
-        /// The messages the audit trail wrote, which are the only ones this
+        /// The lines the audit trail wrote, which are the only ones this
         /// feature emits in a defined order.
-        fn placements(&self) -> Vec<String> {
+        fn proposals(&self) -> Vec<String> {
             self.messages()
                 .into_iter()
-                .filter(|message| message.starts_with("placed "))
+                .filter(|message| message.starts_with("proposed "))
                 .collect()
         }
     }
 
-    impl Sink for Recorder {
+    impl Sink for Paper {
         fn write(&self, record: Record) -> BoxFuture<'_, Result<(), audit_contracts::SinkError>> {
             Box::pin(async move {
-                self.0
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push(record);
+                self.0.record(record);
                 Ok(())
             })
         }
@@ -828,28 +958,19 @@ mod tests {
     /// Stands in for the two features this one consumes.
     ///
     /// One bundle providing three bindings, none of which this crate could
-    /// otherwise reach. A bundle can be booted alone, and the contracts phase
-    /// three reports missing are exactly the doubles to write.
-    struct Doubles {
-        /// The ledger the book writes through.
-        ledger: Arc<dyn Ledger>,
-        /// The default sink, where the trail writes.
-        sink: Arc<dyn Sink>,
-        /// The named sink, where the desk writes its closing record.
-        archive: Arc<dyn Sink>,
-    }
-
-    impl Bundle for Doubles {
-        fn manifest(&self) -> BundleManifest {
-            BundleManifest::new("doubles", "0.1.0")
-        }
-
-        fn register(&self, registry: &mut Registry) -> Result<(), RegisterError> {
-            registry.provide(Provider::from_value(Arc::clone(&self.ledger)));
-            registry.provide(Provider::from_value(Arc::clone(&self.sink)));
-            registry.provide_named(ARCHIVE, Provider::from_value(Arc::clone(&self.archive)));
+    /// otherwise reach — and the three are exactly what phase three reports
+    /// missing when `orders` is resolved alone.
+    ///
+    /// [`FnBundle`] rather than a `struct` and an `impl Bundle`: a bundle that
+    /// exists to register three values in a test has nothing to say in a
+    /// manifest and nothing to hold between calls.
+    fn doubles(ledger: Arc<dyn Ledger>, sink: Arc<dyn Sink>, archive: Arc<dyn Sink>) -> FnBundle {
+        FnBundle::new("doubles", move |registry| {
+            registry.provide(Provider::from_value(Arc::clone(&ledger)));
+            registry.provide(Provider::from_value(Arc::clone(&sink)));
+            registry.provide_named(ARCHIVE, Provider::from_value(Arc::clone(&archive)));
             Ok(())
-        }
+        })
     }
 
     /// What one run of the feature left behind.
@@ -858,10 +979,12 @@ mod tests {
         outcome: Outcome,
         /// The handle, to see whether the desk asked for the stop.
         handle: KernelHandle,
+        /// The ledger the book wrote through, to see what was committed.
+        ledger: Arc<Notebook>,
         /// The default sink.
-        sink: Arc<Recorder>,
+        sink: Arc<Paper>,
         /// The archive.
-        archive: Arc<Recorder>,
+        archive: Arc<Paper>,
     }
 
     /// Three keys, so the configuration path is exercised rather than assumed.
@@ -879,9 +1002,10 @@ mod tests {
     }
 
     /// Builds the kernel this feature plus its doubles make up.
-    async fn build(open_for: u64) -> (Kernel, Arc<Recorder>, Arc<Recorder>) {
-        let sink = Arc::new(Recorder::default());
-        let archive = Arc::new(Recorder::default());
+    async fn build(open_for: u64) -> (Kernel, Arc<Notebook>, Arc<Paper>, Arc<Paper>) {
+        let ledger = Notebook::new(open_for);
+        let sink = Arc::new(Paper::default());
+        let archive = Arc::new(Paper::default());
 
         let kernel = Kernel::builder()
             .capture_signals(false)
@@ -891,27 +1015,28 @@ mod tests {
             ))
             .config_source(settings())
             .bundle(Bundled)
-            .bundle(Doubles {
-                ledger: Notebook::new(open_for),
-                sink: Arc::clone(&sink) as Arc<dyn Sink>,
-                archive: Arc::clone(&archive) as Arc<dyn Sink>,
-            })
+            .bundle(doubles(
+                Arc::clone(&ledger) as Arc<dyn Ledger>,
+                Arc::clone(&sink) as Arc<dyn Sink>,
+                Arc::clone(&archive) as Arc<dyn Sink>,
+            ))
             .build()
             .await
             .expect("the graph closes");
 
-        (kernel, sink, archive)
+        (kernel, ledger, sink, archive)
     }
 
     /// Runs the whole feature until the desk decides to stop.
     async fn run(open_for: u64) -> Run {
-        let (kernel, sink, archive) = build(open_for).await;
+        let (kernel, ledger, sink, archive) = build(open_for).await;
         let handle = kernel.handle();
         let outcome = kernel.run().await;
 
         Run {
             outcome,
             handle,
+            ledger,
             sink,
             archive,
         }
@@ -927,7 +1052,7 @@ mod tests {
         let (cx, controller): (RunContext, ShutdownController) = RunContext::detached();
         controller.begin_draining();
 
-        let archive = Arc::new(Recorder::default());
+        let archive = Arc::new(Paper::default());
         let desk = Arc::new(Desk {
             book: Arc::new(Book {
                 ledger: Notebook::new(u64::MAX),
@@ -949,7 +1074,7 @@ mod tests {
     /// next time, and none at all outside.
     #[tokio::test]
     async fn scope_holds_one_slip() {
-        let (kernel, _sink, _archive) = build(u64::MAX).await;
+        let (kernel, _ledger, _sink, _archive) = build(u64::MAX).await;
 
         let batch = kernel.container().scope();
         let first = batch.get::<Slip>().await.expect("a slip");
@@ -969,21 +1094,40 @@ mod tests {
     /// over the cap never reaches the audit trail.
     #[tokio::test(start_paused = true)]
     async fn veto_stops_the_trail() {
-        // Six entries: two full batches of three, then the ledger closes and
-        // the desk gives up.
-        let run = run(6).await;
+        // Four entries: two batches commit two orders each, then the ledger
+        // closes and the desk gives up.
+        let run = run(4).await;
 
         // Three orders per batch at 100, 200 and 300; the third clears the cap
-        // of 250 and is held.
-        let placements = run.sink.placements();
-        assert_eq!(placements.len(), 4);
-        assert!(placements.iter().all(|line| line.contains("stamped")));
-        assert!(!placements.iter().any(|line| line.contains("order-1-2")));
-        assert!(placements.iter().any(|line| line.contains("order-1-0")));
+        // of 250, is held by the screen, and the trail below the screen never
+        // sees it.
+        let proposals = run.sink.proposals();
+        assert!(proposals.iter().all(|line| line.contains("stamped")));
+        assert!(!proposals.iter().any(|line| line.contains("order-1-2")));
+        assert!(proposals.iter().any(|line| line.contains("order-1-0")));
 
         // The batch summaries reach the same sink through `emit`, which is
         // detached: whether they arrived before the run ended is not something
         // this feature promises, so nothing here asserts on them.
+    }
+
+    /// The veto is a veto: what the screen held is in no ledger.
+    ///
+    /// This is the assertion the ordering inside [`Desk::offer`] exists for,
+    /// and the one a dispatch-after-commit passes only by accident. The cap is
+    /// 250 and every third order is worth 300, so a desk that placed first and
+    /// screened afterwards would leave 300s in the ledger and still report them
+    /// held.
+    #[tokio::test(start_paused = true)]
+    async fn veto_precedes_the_commit() {
+        let run = run(4).await;
+
+        let committed = run.ledger.amounts();
+        assert_eq!(committed, [100, 200, 100, 200]);
+        assert!(
+            committed.iter().all(|amount| *amount <= 250),
+            "an order over the cap reached the ledger: {committed:?}"
+        );
     }
 
     /// A book that cannot place anything asks the kernel to stop.
@@ -993,12 +1137,51 @@ mod tests {
 
         assert!(run.handle.is_shutting_down());
         assert!(run.outcome.is_success());
-        assert!(run.sink.placements().is_empty());
+        // Nothing was committed. The trail still holds three lines: screening
+        // happens before the commit, so an order that was proposed, allowed and
+        // then refused by the book is recorded as proposed — and the refusal is
+        // on the batch's own slip.
+        assert_eq!(run.ledger.len(), 0);
+        assert_eq!(run.sink.proposals().len(), 3);
 
         let closing = run.archive.messages();
         assert_eq!(closing.len(), 1);
         assert!(closing[0].contains("3 refused"));
         assert!(closing[0].contains("0 placed"));
+    }
+
+    /// A batch that cannot reach its slip reports a failure, not a success.
+    ///
+    /// A detached context carries an empty container, so the scoped binding
+    /// this feature registers is not there to resolve — the shape a broken
+    /// graph has. Answering `true` there — "the batch went fine" — is what
+    /// would let a desk count empty batches while the probe grades the silence
+    /// `Up`, and it is what this asserts against.
+    #[tokio::test]
+    async fn empty_batch_is_not_success() {
+        let telemetry = Arc::new(RecordingTelemetry::new());
+        let (cx, _controller) = RunContext::builder()
+            .with_telemetry(Arc::clone(&telemetry) as Arc<dyn Telemetry>)
+            .build();
+
+        let archive = Arc::new(Paper::default());
+        let desk = Desk {
+            book: Arc::new(Book {
+                ledger: Notebook::new(u64::MAX),
+                count: AtomicU64::new(0),
+            }),
+            archive: Arc::clone(&archive) as Arc<dyn Sink>,
+            tally: Arc::new(Tally::default()),
+            every: Duration::from_secs(3600),
+            batch: 3,
+        };
+
+        assert!(!desk.batch(&cx).await);
+        assert!(telemetry.contains("orders.slip_unreachable"));
+        // Not counted either: a batch that never happened is not in the tally
+        // the health probe reads.
+        assert_eq!(desk.tally.batches.load(Ordering::Relaxed), 0);
+        assert!(archive.messages().is_empty());
     }
 
     /// The probe reports on what the desk did, and nothing else.

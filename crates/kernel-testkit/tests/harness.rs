@@ -1,6 +1,7 @@
 //! Driving a kernel from a test: the builder's defaults, the harness's ends,
 //! and the event log.
 
+use core::time::Duration;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -11,7 +12,7 @@ use kernel::core::{ConfigNode, ConfigTree, Scalar};
 use kernel::{
     BootContext, Component, ComponentBooted, MemorySource, Provider, RunContext, Runnable,
 };
-use kernel_testkit::{EventLog, FnBundle, TestBuilder};
+use kernel_testkit::{EventLog, FnBundle, LifecycleLog, TestBuilder};
 
 /// A component that does nothing but be booted, under a name of its own.
 struct First;
@@ -236,5 +237,129 @@ async fn closure_bundle_names_itself() {
         .await
         .expect("start");
     assert!(harness.telemetry().contains("kernel.registered"));
+    harness.stop().await;
+}
+
+/// A bundle of the shape design section 17 illustrates: one component, the
+/// contract it answers, and no runnable at all.
+fn booking(log: Arc<LifecycleLog>) -> FnBundle {
+    FnBundle::new("booking", move |registry| {
+        registry.component(Provider::from_value(Arc::clone(&log)));
+        Ok(())
+    })
+}
+
+// A graph with nothing to run stops itself, which is right for a program and
+// is what leaves a runnable-less bundle undrivable: the component the container
+// hands out has been shut down before the test can use it.
+#[tokio::test(start_paused = true)]
+async fn runnable_less_kernel_ends() {
+    let log = Arc::new(LifecycleLog::new());
+
+    let harness = TestBuilder::new()
+        .bundle(booking(Arc::clone(&log)))
+        .start()
+        .await
+        .expect("start");
+
+    let outcome = harness.wait().await;
+
+    assert!(matches!(outcome, Outcome::Completed), "{outcome:?}");
+    assert_eq!(log.stops(), 1);
+}
+
+// The opt-in holds the same graph open: the clock moves and the component is
+// still up, until the test asks for the stop.
+#[tokio::test(start_paused = true)]
+async fn keep_running_holds_open() {
+    let log = Arc::new(LifecycleLog::new());
+
+    let harness = TestBuilder::new()
+        .bundle(booking(Arc::clone(&log)))
+        .keep_running()
+        .start()
+        .await
+        .expect("start");
+
+    tokio::time::sleep(Duration::from_secs(60)).await;
+
+    assert_eq!(log.boots(), 1);
+    assert_eq!(log.stops(), 0, "the kernel stopped on its own");
+    assert!(harness.container().get::<LifecycleLog>().await.is_ok());
+
+    let outcome = harness.stop().await;
+
+    assert!(matches!(outcome, Outcome::ShutdownRequested), "{outcome:?}");
+    assert_eq!(log.stops(), 1);
+}
+
+// Asking twice registers one runnable. Two would be two bindings of one
+// contract, and phase three would refuse the build.
+#[tokio::test(start_paused = true)]
+async fn keep_running_asked_twice() {
+    let harness = TestBuilder::new()
+        .keep_running()
+        .keep_running()
+        .start()
+        .await
+        .expect("start");
+
+    let outcome = harness.stop().await;
+
+    assert!(matches!(outcome, Outcome::ShutdownRequested), "{outcome:?}");
+}
+
+// The harness says whether the run is still on its task. A runnable-less kernel
+// has already ended by the time the harness is handed over, and the keep-alive
+// is what changes that — the two facts a test used to infer from a resolution
+// that happened to succeed.
+#[tokio::test(start_paused = true)]
+async fn is_running_reports_the_run() {
+    let ended = TestBuilder::new().start().await.expect("start");
+    assert!(!ended.is_running(), "{ended:?}");
+    ended.wait().await;
+
+    let live = TestBuilder::new()
+        .keep_running()
+        .start()
+        .await
+        .expect("start");
+    assert!(live.is_running(), "{live:?}");
+
+    live.stop().await;
+}
+
+// The sink is readable while the kernel runs, and waiting on it is the harness's
+// job rather than every test's. A record that never arrives comes back as the
+// count that did, so the assertion names a number instead of a timeout.
+#[tokio::test(start_paused = true)]
+async fn waits_for_a_record() {
+    let harness = TestBuilder::new()
+        .substitute_runnable(Arc::new(Idle))
+        .start()
+        .await
+        .expect("start");
+
+    assert_eq!(harness.wait_for_record("kernel.running", 1).await, 1);
+    assert_eq!(harness.wait_for_record("kernel.absent", 1).await, 0);
+
+    harness.stop().await;
+}
+
+// `Debug` renders what a failing assertion needs: whether the run is live and
+// how much the sink holds. Without it, a `Result` carrying a harness cannot be
+// unwrapped with `expect_err`.
+#[tokio::test(start_paused = true)]
+async fn harness_renders_itself() {
+    let harness = TestBuilder::new()
+        .keep_running()
+        .start()
+        .await
+        .expect("start");
+
+    let rendered = format!("{harness:?}");
+    assert!(rendered.starts_with("TestHarness {"), "{rendered}");
+    assert!(rendered.contains("running: true"), "{rendered}");
+
     harness.stop().await;
 }

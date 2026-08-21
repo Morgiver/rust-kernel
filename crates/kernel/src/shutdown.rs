@@ -25,6 +25,7 @@
 //! can request a stop without holding the lifecycle driver.
 
 use core::fmt;
+use core::time::Duration;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
@@ -171,6 +172,91 @@ impl Shutdown {
     /// Resolves when stopping starts, or immediately if it already has.
     pub async fn stopping(&self) {
         self.ladder.reached(Stage::Stopping).await;
+    }
+
+    /// Waits `period`, or returns early once draining starts.
+    ///
+    /// The wait every periodic unit needs: it does its work, waits for the
+    /// next turn, and stops waiting the moment the ladder moves. Without it
+    /// each such unit writes the same race between a timer and the token by
+    /// hand, and takes a dependency on a runtime's timer to do it.
+    ///
+    /// Draining means *stop taking new work*, and a new turn of a loop is new
+    /// work, which is why this is the wait a poller wants. A unit that must
+    /// keep working through the draining stage waits with
+    /// [`sleep_until_stopping`](Self::sleep_until_stopping) instead — calling
+    /// this one again after it reported draining returns immediately every
+    /// time, because the stage does not un-happen.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use core::time::Duration;
+    /// # use kernel::Shutdown;
+    /// # async fn poll(shutdown: Shutdown, every: Duration) {
+    /// while shutdown.sleep_until_draining(every).await.is_elapsed() {
+    ///     // one turn of the loop
+    /// }
+    /// # }
+    /// ```
+    pub async fn sleep_until_draining(&self, period: Duration) -> Tick {
+        self.bounded(Stage::Draining, period).await
+    }
+
+    /// Waits `period`, or returns early once stopping starts.
+    ///
+    /// The same wait as [`sleep_until_draining`](Self::sleep_until_draining),
+    /// one rung higher: draining leaves it waiting, so a unit that must keep
+    /// working while the process refuses new work still gets its turns.
+    pub async fn sleep_until_stopping(&self, period: Duration) -> Tick {
+        self.bounded(Stage::Stopping, period).await
+    }
+
+    /// The wait both public forms are made of.
+    ///
+    /// Biased so that a ladder already at or past `target` wins over a period
+    /// that is also ready: the answer must not depend on which of two ready
+    /// branches the runtime happens to poll first.
+    async fn bounded(&self, target: Stage, period: Duration) -> Tick {
+        tokio::select! {
+            biased;
+            () = self.ladder.reached(target) => Tick::Interrupted(self.stage()),
+            () = tokio::time::sleep(period) => Tick::Elapsed,
+        }
+    }
+}
+
+/// How a bounded wait ended.
+///
+/// Returned by [`Shutdown::sleep_until_draining`] and
+/// [`Shutdown::sleep_until_stopping`], which is what makes the wait usable as
+/// a loop condition: the caller reads the reason it woke up rather than
+/// re-reading the stage and guessing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tick {
+    /// The whole period passed with the awaited stage still ahead.
+    Elapsed,
+    /// The wait was cut short: the ladder had reached the awaited stage, or
+    /// passed it. The stage carried is the one the ladder is on, which is not
+    /// always the one that was awaited — a ladder that jumped straight to
+    /// [`Stage::Stopping`] releases a wait on draining.
+    Interrupted(Stage),
+}
+
+impl Tick {
+    /// Whether the period passed rather than being cut short.
+    #[must_use]
+    pub fn is_elapsed(self) -> bool {
+        matches!(self, Self::Elapsed)
+    }
+
+    /// The stage that cut the wait short, or `None` if the period passed.
+    #[must_use]
+    pub fn stage(self) -> Option<Stage> {
+        match self {
+            Self::Elapsed => None,
+            Self::Interrupted(stage) => Some(stage),
+        }
     }
 }
 
@@ -544,6 +630,96 @@ mod tests {
 
         let waited = timeout(Duration::from_secs(600), handle.requested()).await;
         assert!(waited.is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sleep_elapses_quietly() {
+        let (_controller, shutdown) = ShutdownController::new(policy());
+        let started = TokioInstant::now();
+
+        let tick = shutdown.sleep_until_draining(Duration::from_secs(60)).await;
+
+        assert_eq!(tick, Tick::Elapsed);
+        assert!(tick.is_elapsed());
+        assert_eq!(tick.stage(), None);
+        assert!(started.elapsed() >= Duration::from_secs(60));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn draining_cuts_sleep() {
+        let (controller, shutdown) = ShutdownController::new(policy());
+        let waiter = shutdown.clone();
+        let task = tokio::spawn(async move { waiter.sleep_until_draining(Duration::MAX).await });
+
+        tokio::task::yield_now().await;
+        controller.begin_draining();
+
+        let tick = timeout(Duration::from_secs(1), task)
+            .await
+            .expect("the wait must end with the stage")
+            .expect("waiter panicked");
+
+        assert_eq!(tick, Tick::Interrupted(Stage::Draining));
+        assert!(!tick.is_elapsed());
+        assert_eq!(tick.stage(), Some(Stage::Draining));
+    }
+
+    // The rung matters: a unit that must finish what it holds keeps its turns
+    // through draining and loses them only at stopping.
+    #[tokio::test(start_paused = true)]
+    async fn draining_keeps_stopping_sleep() {
+        let (controller, shutdown) = ShutdownController::new(policy());
+        controller.begin_draining();
+
+        let elapsed = shutdown.sleep_until_stopping(Duration::from_secs(1)).await;
+        controller.begin_stopping();
+        let cut = shutdown
+            .sleep_until_stopping(Duration::from_secs(600))
+            .await;
+
+        assert_eq!(elapsed, Tick::Elapsed);
+        assert_eq!(cut, Tick::Interrupted(Stage::Stopping));
+    }
+
+    // A stage already passed wins over a period that is also ready, so the
+    // answer does not depend on which branch the runtime polls first.
+    #[tokio::test(start_paused = true)]
+    async fn passed_stage_wins() {
+        let (controller, shutdown) = ShutdownController::new(policy());
+        controller.begin_stopping();
+
+        let tick = shutdown.sleep_until_draining(Duration::ZERO).await;
+
+        assert_eq!(tick, Tick::Interrupted(Stage::Stopping));
+    }
+
+    // The pattern section 14 asks every periodic unit to write, written once:
+    // the loop ends because the ladder moved, not because a timer fired.
+    #[tokio::test(start_paused = true)]
+    async fn loop_ends_on_stage() {
+        let (controller, shutdown) = ShutdownController::new(policy());
+        let waiter = shutdown.clone();
+        let task = tokio::spawn(async move {
+            let mut turns = 0_u32;
+            while waiter
+                .sleep_until_draining(Duration::from_secs(1))
+                .await
+                .is_elapsed()
+            {
+                turns += 1;
+            }
+            turns
+        });
+
+        sleep(Duration::from_millis(3_500)).await;
+        controller.begin_draining();
+
+        let turns = timeout(Duration::from_secs(1), task)
+            .await
+            .expect("the loop must end")
+            .expect("waiter panicked");
+
+        assert!(turns >= 3, "{turns}");
     }
 
     #[test]

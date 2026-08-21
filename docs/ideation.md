@@ -938,9 +938,17 @@ tourné.
 - Un Bundle peut être booté seul. Les contrats non satisfaits sont rapportés en
   phase 3 sous forme de liste — cette liste **est** exactement la liste des
   doublures à écrire.
-- `kernel-testkit` fournit `FnBundle` (un Bundle depuis une fermeture),
-  `EventLog<E>` (un Listener qui conserve chaque événement de type `E`) et
-  `missing_contracts`. L'enregistreur de telemetry, `RecordingTelemetry`, vit
+- Une substitution **remplace ou ajoute** : un contrat qu'un Bundle du graphe
+  lie déjà est remplacé — la doublure prend sa place, son rang et sa position
+  par défaut — et un contrat que personne ne lie est ajouté. Le remplacement
+  passe par des affordances `#[doc(hidden)]` du `Registry`, sous la même feature
+  `testing` que le hook, atteintes depuis lui : ce n'est pas un huitième verbe,
+  la liste fermée de sept étant la surface offerte aux Bundles.
+- `FnBundle` (un Bundle depuis une fermeture) vit dans `kernel` : une
+  application qui veut un seul Listener n'a pas à écrire un type et deux
+  méthodes de trait pour atteindre le formulaire. `kernel-testkit` le
+  ré-exporte, et fournit `EventLog<E>` (un Listener qui conserve chaque
+  événement de type `E`) et `missing_contracts`. L'enregistreur de telemetry, `RecordingTelemetry`, vit
   dans `kernel-core` parce que le Kernel s'en sert aussi comme implémentation
   par défaut de diagnostic. `missing_contracts` rend un
   `Result<Vec<ContractRef>, KernelError>` : la liste vide dit « ce Bundle tient

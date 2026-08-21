@@ -1,5 +1,6 @@
 //! Building a kernel for a test, and driving it from one.
 
+use core::fmt;
 use core::time::Duration;
 use std::sync::Arc;
 
@@ -15,6 +16,8 @@ use kernel_core::{
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::doubles::Parking;
+
 /// The budgets a test kernel shuts down on.
 ///
 /// Short on purpose: a test that reaches a shutdown deadline should report a
@@ -26,6 +29,17 @@ const TEST_POLICY: ShutdownPolicy =
 
 /// Unit a failure of the harness's own driver task is attributed to.
 const DRIVER: &str = "kernel";
+
+/// How long [`TestHarness::wait_for_record`] waits before giving up.
+///
+/// Long enough for a supervisor working through a backoff, short enough that a
+/// kernel which never records what the test asked for fails in the time a test
+/// takes. A test with a paused clock never spends it: the poll's sleep advances
+/// the clock instead of the wall.
+const PATIENCE: Duration = Duration::from_secs(5);
+
+/// How often [`TestHarness::wait_for_record`] looks again.
+const POLL: Duration = Duration::from_millis(5);
 
 /// One registration a substitution performs, held until phase two runs it.
 ///
@@ -54,6 +68,11 @@ pub struct TestBuilder {
     /// bundle has registered and before phase three, so the graph validation
     /// sees them.
     substitutions: Vec<Substitution>,
+    /// Whether a [`Parking`] runnable is registered to hold the graph open.
+    ///
+    /// A flag rather than one more entry in `substitutions`, so that asking
+    /// twice registers one runnable instead of two bindings of one contract.
+    keep_running: bool,
 }
 
 impl TestBuilder {
@@ -68,7 +87,34 @@ impl TestBuilder {
                 .shutdown_policy(TEST_POLICY),
             telemetry,
             substitutions: Vec::new(),
+            keep_running: false,
         }
+    }
+
+    /// Holds the kernel open even when nothing in the graph runs.
+    ///
+    /// A kernel whose runnables have all ended has nothing left to wait for,
+    /// and a kernel with no runnable at all is that case from the start: phase
+    /// five publishes [`Running`] and the stop is requested in the same breath,
+    /// so by the time [`start`](Self::start) hands a harness back the
+    /// components have been shut down and the container hands out objects
+    /// nobody can use any more.
+    ///
+    /// That is correct for a program — an object graph with nothing running in
+    /// it is a program that exits — and it makes the commonest bundle shape,
+    /// a component plus the contract it answers, impossible to drive from a
+    /// test. This registers a [`Parking`] runnable, which returns when the
+    /// shutdown token fires and does nothing else, so the graph stays open
+    /// until the test asks for the stop.
+    ///
+    /// Explicit, and never implied by anything else here: a harness that
+    /// decided on its own when a kernel stops would make the test agree with a
+    /// kernel nobody runs. A bundle that owns a runnable of its own does not
+    /// need it, and asking for it twice registers one runnable.
+    #[must_use]
+    pub fn keep_running(mut self) -> Self {
+        self.keep_running = true;
+        self
     }
 
     /// Appends a bundle, exactly as the production builder would.
@@ -94,6 +140,25 @@ impl TestBuilder {
 
     /// Replaces the implementation of a contract with a double.
     ///
+    /// # Replace, or add
+    ///
+    /// A contract a bundle in this graph already binds is REPLACED: the double
+    /// takes that binding's place, rank and default position, and the
+    /// implementation the bundle registered is gone. A contract nobody binds is
+    /// ADDED, which is the round trip
+    /// [`missing_contracts`](crate::missing_contracts) describes — one double
+    /// per unsatisfied line.
+    ///
+    /// Both are one call because both are the same sentence: after it, the
+    /// contract resolves to the double. Which of the two happened is a fact
+    /// about the bundles under test, not about the test.
+    ///
+    /// Replacing is not smuggling: the substitutions are recorded before phase
+    /// three, so a graph a double leaves open is refused here exactly as the
+    /// real assembly would refuse it.
+    ///
+    /// # Nature is kept
+    ///
     /// The substitution KEEPS THE NATURE of what it replaces: standing in for a
     /// component leaves it a component, still booted and still stopped by the
     /// kernel. A double that skipped the lifecycle would make the test agree
@@ -108,12 +173,16 @@ impl TestBuilder {
     #[must_use]
     pub fn substitute<C: ?Sized + Send + Sync + 'static>(mut self, double: Arc<C>) -> Self {
         self.substitutions.push(Box::new(move |registry| {
-            registry.provide(Provider::from_value(double));
+            registry.__replace(Provider::from_value(double));
         }));
         self
     }
 
-    /// Replaces a named implementation.
+    /// Replaces a named implementation, or adds one under that name.
+    ///
+    /// A name is part of a contract's identity, so this replaces the binding
+    /// recorded under that name and never the default one. See
+    /// [`substitute`](Self::substitute) for when each half applies.
     #[must_use]
     pub fn substitute_named<C: ?Sized + Send + Sync + 'static>(
         mut self,
@@ -121,7 +190,7 @@ impl TestBuilder {
         double: Arc<C>,
     ) -> Self {
         self.substitutions.push(Box::new(move |registry| {
-            registry.provide_named(name, Provider::from_value(double));
+            registry.__replace_named(name, Provider::from_value(double));
         }));
         self
     }
@@ -141,10 +210,15 @@ impl TestBuilder {
     /// ordered against the value binding and not against this one — a double
     /// whose boot has to precede its consumer's is the one case where that
     /// matters, and the ordering has to be stated on the consumer.
+    ///
+    /// Replace or add, like [`substitute`](Self::substitute): a component a
+    /// bundle already registered under this type is replaced, both halves of
+    /// it — the binding the container resolves and the entry the kernel boots
+    /// — and one nobody registered is added.
     #[must_use]
     pub fn substitute_component<T: Component>(mut self, double: Arc<T>) -> Self {
         self.substitutions.push(Box::new(move |registry| {
-            registry.component(Provider::from_value(double));
+            registry.__replace_component(Provider::from_value(double));
         }));
         self
     }
@@ -157,7 +231,7 @@ impl TestBuilder {
     #[must_use]
     pub fn substitute_runnable<T: Runnable>(mut self, double: Arc<T>) -> Self {
         self.substitutions.push(Box::new(move |registry| {
-            registry.runnable(Provider::from_value(double));
+            registry.__replace_runnable(Provider::from_value(double));
         }));
         self
     }
@@ -246,10 +320,16 @@ impl TestBuilder {
     /// before phase three.
     fn hooked(self) -> KernelBuilder {
         let substitutions = self.substitutions;
+        let keep_running = self.keep_running;
         self.builder
             .__register_hook(Box::new(move |registry: &mut Registry| {
                 for substitution in substitutions {
                     substitution(registry);
+                }
+                // Last, so that a runnable the test substituted is registered
+                // under its own order and this one only ever joins them.
+                if keep_running {
+                    registry.runnable(Provider::from_value(Arc::new(Parking)));
                 }
             }))
     }
@@ -351,5 +431,61 @@ impl TestHarness {
             Run::Live(task) => join(task).await,
             Run::Ended(outcome) => outcome,
         }
+    }
+
+    /// Whether phases four to seven are still on their task.
+    ///
+    /// `false` once the run has returned, whether it stopped on its own or was
+    /// asked to. A kernel with no runnable is already `false` when the harness
+    /// is handed over, which is what
+    /// [`TestBuilder::keep_running`](TestBuilder::keep_running) exists to
+    /// change — asking this is how a test states which of the two it expected
+    /// instead of inferring it from a resolution that happened to succeed.
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        match &self.run {
+            Run::Live(task) => !task.is_finished(),
+            Run::Ended(_) => false,
+        }
+    }
+
+    /// Waits until `event` has been recorded at least `count` times, and
+    /// returns how many were.
+    ///
+    /// Telemetry is what a running kernel says about itself, and most of what
+    /// it says arrives on a task the test does not hold: a restart, a listener
+    /// failure, a phase transition. Reading the sink once therefore reads it
+    /// too early, and every test that needs one of those facts would otherwise
+    /// write the same poll by hand.
+    ///
+    /// It gives up after a fixed patience and returns the count it saw, so a
+    /// test asserts on a number rather than on a timeout: `assert_eq!` on the
+    /// result names both what was expected and what arrived.
+    pub async fn wait_for_record(&self, event: &str, count: usize) -> usize {
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        loop {
+            let seen = self
+                .telemetry
+                .records()
+                .iter()
+                .filter(|record| record.event == event)
+                .count();
+            if seen >= count || tokio::time::Instant::now() >= deadline {
+                return seen;
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+}
+
+impl fmt::Debug for TestHarness {
+    /// Says whether the run is still going and how much the sink holds. Neither
+    /// the container nor the handle carries anything a test could act on here,
+    /// and the kernel's own `Debug` counts what it drives.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TestHarness")
+            .field("running", &self.is_running())
+            .field("records", &self.telemetry.records().len())
+            .finish_non_exhaustive()
     }
 }

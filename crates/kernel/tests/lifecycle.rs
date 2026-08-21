@@ -21,8 +21,8 @@ use kernel::core::{
 };
 use kernel::events::ShutdownRequested;
 use kernel::{
-    BootContext, BoxFuture, Bundle, Component, ContractRef, Kernel, Listener, ListenerContext,
-    Provider, Registry, RunContext, Runnable, ShutdownContext,
+    BootContext, BoxFuture, Bundle, Component, ContractRef, FnBundle, Kernel, Listener,
+    ListenerContext, Provider, Registry, RunContext, Runnable, Running, ShutdownContext, Stopped,
 };
 
 // --------------------------------------------------------------------------
@@ -337,6 +337,45 @@ runnables!(
 // --------------------------------------------------------------------------
 // Listeners
 // --------------------------------------------------------------------------
+
+/// Records what the last event of the run carried.
+///
+/// [`Stopped`] is emitted rather than dispatched, so the run settles its
+/// detached emissions before returning and this has already been called by the
+/// time the outcome is read.
+struct Ending(Arc<Mutex<Option<Stopped>>>);
+
+impl Listener<Stopped> for Ending {
+    fn on_event<'a>(
+        &'a self,
+        event: &'a mut Stopped,
+        _cx: &'a ListenerContext<'a>,
+    ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+        Box::pin(async move {
+            *self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(event.clone());
+            Ok(Flow::Continue)
+        })
+    }
+}
+
+/// Notes that phase five was reached, and what it reported.
+struct Heard(Journal);
+
+impl Listener<Running> for Heard {
+    fn on_event<'a>(
+        &'a self,
+        event: &'a mut Running,
+        _cx: &'a ListenerContext<'a>,
+    ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+        Box::pin(async move {
+            self.0.note(format!("running {}", event.runnables));
+            Ok(Flow::Continue)
+        })
+    }
+}
 
 /// Adds a note to the shutdown request, and records that it was heard.
 ///
@@ -889,4 +928,161 @@ async fn essential_failure_stops_kernel() {
     // registry stamps `Runnable::name` into the id, and every record and every
     // error carries that one name from there on.
     assert_eq!(errors[0].runnable().name(), "refuser");
+}
+
+// --------------------------------------------------------------------------
+// Registering, listening and settling without a bundle of one's own
+// --------------------------------------------------------------------------
+
+/// An application registers a listener without authoring a bundle type.
+///
+/// The seven verbs live on the [`Registry`], and a `Registry` reaches
+/// [`Bundle::register`] and nowhere else. [`FnBundle`] is that form with a
+/// closure in it, so the application writes the one line it has instead of a
+/// type and two trait methods.
+#[tokio::test(start_paused = true)]
+async fn listener_without_a_bundle() {
+    let journal = Journal::default();
+    let sink = RecordingTelemetry::new();
+
+    let heard = journal.clone();
+    let kernel = Kernel::builder()
+        .telemetry(Arc::new(sink.clone()))
+        .shutdown_policy(BUDGET)
+        .capture_signals(false)
+        .bundle(FnBundle::new("app", move |registry| {
+            registry.listen::<Running, _>(Heard(heard.clone()), Priority::NORMAL);
+            Ok(())
+        }))
+        .build()
+        .await
+        .expect("a graph with one listener in it closes");
+
+    let outcome = kernel.run().await;
+
+    assert!(outcome.is_success(), "{outcome:?}");
+    assert!(journal.saw("running 0"), "{:?}", journal.entries());
+}
+
+/// The last event of the run carries the same three counts the telemetry line
+/// does, so a listener and an operator reading `kernel.stopped` agree.
+///
+/// The run below fails once and recovers: `run_failures` counts the ending,
+/// `unhandled` counts what nothing recovered from, and reading either one for
+/// the other is the confusion the split exists to prevent. A listener that
+/// could read only `abandoned` could not tell the two apart at all.
+#[tokio::test(start_paused = true)]
+async fn stopped_carries_counts() {
+    let journal = Journal::default();
+    let seen = Arc::new(Mutex::new(None));
+    let sink = RecordingTelemetry::new();
+    let attempts = Arc::new(AtomicUsize::new(0));
+
+    let flapping = {
+        let journal = journal.clone();
+        let attempts = Arc::clone(&attempts);
+        assembly("flapping", move |registry| {
+            registry.runnable(Provider::from_value(Arc::new(Flapper(
+                Job::new(
+                    ancillary().restart(RestartPolicy::on_failure(
+                        3,
+                        Backoff::Fixed(Duration::from_millis(10)),
+                    )),
+                    &journal,
+                    Work::FailThenRequest,
+                )
+                .counting(&attempts),
+            ))));
+        })
+    };
+
+    let kept = Arc::clone(&seen);
+    let kernel = Kernel::builder()
+        .telemetry(Arc::new(sink.clone()))
+        .shutdown_policy(BUDGET)
+        .capture_signals(false)
+        .bundle(flapping)
+        .bundle(FnBundle::new("app", move |registry| {
+            registry.listen::<Stopped, _>(Ending(Arc::clone(&kept)), Priority::NORMAL);
+            Ok(())
+        }))
+        .build()
+        .await
+        .expect("the graph closes");
+
+    let outcome = kernel.run().await;
+    assert!(matches!(outcome, Outcome::ShutdownRequested), "{outcome:?}");
+
+    let event = seen
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .expect("the stop was published before the run returned");
+    assert_eq!(event.abandoned, 0);
+    // The failure was recovered from, so it is a failure of the run and not one
+    // of the outcome.
+    assert_eq!(event.run_failures, 1);
+    assert_eq!(event.unhandled, 0);
+    assert_eq!(
+        recorded(&sink, "kernel.stopped", "run_failures"),
+        Some(i64::try_from(event.run_failures).expect("a count fits"))
+    );
+    assert_eq!(
+        recorded(&sink, "kernel.stopped", "unhandled"),
+        Some(i64::try_from(event.unhandled).expect("a count fits"))
+    );
+}
+
+/// A caller that emits before running can wait for what it emitted.
+///
+/// [`EventDispatcher::settle`] is what makes a detached emission deliverable
+/// rather than best-effort, and without an accessor on [`Kernel`] it was
+/// reachable only from inside a boot, run or shutdown context.
+///
+/// [`EventDispatcher::settle`]: kernel::EventDispatcher::settle
+#[tokio::test(start_paused = true)]
+async fn dispatcher_settles_emissions() {
+    let journal = Journal::default();
+    let sink = RecordingTelemetry::new();
+
+    let heard = journal.clone();
+    let kernel = Kernel::builder()
+        .telemetry(Arc::new(sink.clone()))
+        .shutdown_policy(BUDGET)
+        .capture_signals(false)
+        .bundle(FnBundle::new("app", move |registry| {
+            registry.listen::<Running, _>(Heard(heard.clone()), Priority::NORMAL);
+            Ok(())
+        }))
+        .build()
+        .await
+        .expect("the graph closes");
+
+    kernel.dispatcher().emit(Running { runnables: 7 });
+    kernel.dispatcher().settle().await;
+
+    assert!(journal.saw("running 7"), "{:?}", journal.entries());
+}
+
+/// A listener is callable with no kernel behind it, like a component and a
+/// runnable before it.
+///
+/// This file is a separate crate, so a context the kernel builds internally is
+/// out of reach here: [`ListenerContext::detached`] is what makes the call
+/// writable at all.
+#[tokio::test]
+async fn detached_listener_runs() {
+    let journal = Journal::default();
+    let detached = ListenerContext::detached();
+
+    let flow = Heard(journal.clone())
+        .on_event(&mut Running { runnables: 2 }, &detached.context())
+        .await
+        .expect("the listener handled the event");
+
+    assert!(matches!(flow, Flow::Continue));
+    assert!(journal.saw("running 2"));
+    // The container it was given is empty, and it is a real one: a listener
+    // that resolves is told what is missing rather than panicking.
+    assert!(detached.container().get::<Journal>().await.is_err());
 }

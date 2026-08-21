@@ -39,17 +39,14 @@
 //! the bound, the context states the instant it lands on — and the component
 //! never recomputes the second from the first.
 
-use core::future::Future;
-use core::pin::Pin;
-use core::task::{Context, Poll};
 use core::time::Duration;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
+use kernel::core::future::yield_now;
 use kernel::core::{
-    ComponentError, ComponentId, ConfigError, ConfigErrorKind, ConfigNode, FromConfig, Health,
-    HealthProbe, Secret,
+    ComponentError, ComponentId, ConfigError, ConfigNode, FromConfig, Health, HealthProbe, Secret,
 };
 use kernel::{BootContext, BoxFuture, Component, ComponentDescriptor, Extension, ShutdownContext};
 use ledger_contracts::{Entry, Ledger, LedgerError, OpeningNote};
@@ -98,49 +95,24 @@ pub struct Settings {
 }
 
 impl FromConfig for Settings {
+    /// One [`ConfigNode::field`] call per field, and nothing else.
+    ///
+    /// `field` reads the leaf and re-roots whatever fails under the leaf's own
+    /// key, so `flush_timeout: true` is reported at `flush_timeout` and not at
+    /// the struct. The rule the reader is being shown is that a hand-written
+    /// `FromConfig` writes no path arithmetic of its own: it names the leaf,
+    /// once, and the error carries the path it was named with.
     fn from_config(node: &ConfigNode) -> Result<Self, ConfigError> {
-        let batch: usize = field(node, "batch")?;
+        let batch: usize = node.field("batch")?;
         if batch == 0 {
             return Err(ConfigError::invalid("batch", "a batch of zero never fills"));
         }
         Ok(Self {
             batch,
-            signing_key: field(node, "signing_key")?,
-            flush_timeout: field(node, "flush_timeout")?,
+            signing_key: node.field("signing_key")?,
+            flush_timeout: node.field("flush_timeout")?,
         })
     }
-}
-
-/// Reads `key` out of `node`, reporting failures against the leaf rather than
-/// the struct.
-///
-/// Every hand-written [`FromConfig`] for a struct needs this and the public
-/// surface offers no way to reach the copies `kernel-core` and `kernel` each
-/// keep privately. A [`ConfigError`] can be built with a path but not
-/// re-rooted under one, which is why the re-rooting is spelled out below.
-///
-/// [`ConfigErrorKind::Source`] carries a foreign cause that cannot be rebuilt,
-/// so such an error passes through with whatever path it was raised with. No
-/// source in this example produces one; a source that parsed a file would.
-fn field<T: FromConfig>(node: &ConfigNode, key: &str) -> Result<T, ConfigError> {
-    let Some(value) = node.get(key) else {
-        return Err(ConfigError::missing(key));
-    };
-    T::from_config(value).map_err(|error| {
-        let path = if error.path().is_empty() {
-            key.to_owned()
-        } else {
-            format!("{key}.{}", error.path())
-        };
-        match error.kind() {
-            ConfigErrorKind::Missing => ConfigError::missing(path),
-            ConfigErrorKind::TypeMismatch { expected, found } => {
-                ConfigError::type_mismatch(path, expected, found)
-            }
-            ConfigErrorKind::Invalid(detail) => ConfigError::invalid(path, detail.clone()),
-            ConfigErrorKind::Source(_) => error,
-        }
-    })
 }
 
 // --------------------------------------------------------------------------
@@ -237,9 +209,27 @@ impl Book {
 
     /// The state, whatever a previous panic did to the lock.
     ///
-    /// A poisoned lock means a caller unwound while holding it; the journal is
-    /// a `Vec` of finished lines, so the worst it can be is short one entry.
-    /// Refusing every later call would turn that into an outage.
+    /// # Why recovering from the poison is allowed here, and what it costs
+    ///
+    /// Taking a poisoned lock is only defensible when the state behind it
+    /// cannot be *half* written — otherwise the next caller reads a torn value
+    /// and carries on as if nothing had happened, which is worse than the
+    /// panic that caused it. So the permission is not free: it is paid for by
+    /// an invariant this type maintains, and the invariant is that **every
+    /// mutation of two fields of [`State`] is a single statement**. There are
+    /// two such places, [`Book::open`] and [`Book::flush`], and each says so:
+    /// everything that can fail — rendering a line, sealing an entry — is done
+    /// *before* the guard is taken, and what happens under it is a write, or a
+    /// pair of writes whose second cannot fail once the first has landed.
+    ///
+    /// Given that, a caller that unwound while holding this guard leaves the
+    /// journal complete and the buffer consistent with it, so refusing every
+    /// later call would turn a caller's panic into an outage of the store.
+    ///
+    /// A reader copying this pattern owes the same invariant. Where it cannot
+    /// be had — two fields that must move together and cannot move in one
+    /// statement — the honest call is `.expect()`, which turns the torn state
+    /// into a stopped process instead of a wrong answer.
     fn locked(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -252,10 +242,15 @@ impl Book {
     /// private constructors — so this is the largest part of booting that can
     /// be exercised by a test.
     fn open<'n>(&self, notes: impl IntoIterator<Item = &'n OpeningNote>) {
+        // Rendered before the guard is taken, so the critical section holds no
+        // step that can unwind: see [`Book::locked`] for why that matters.
+        let heading: Vec<String> = notes
+            .into_iter()
+            .map(|note| format!("; {}", note.0))
+            .collect();
+
         let mut state = self.locked();
-        for note in notes {
-            state.journal.push(format!("; {}", note.0));
-        }
+        state.journal.extend(heading);
         state.open = true;
     }
 
@@ -302,16 +297,24 @@ impl Book {
             // One guard for the whole commit: taking the entry and writing its
             // line under two separate locks would let a concurrent flush
             // interleave and put the journal out of order.
+            //
+            // The entry is *read* rather than taken, and it leaves the buffer
+            // only once its line is in the journal. Popping first and pushing
+            // afterwards is the shape that loses an entry when the push
+            // unwinds, and the poison recovery in `locked` would then hand the
+            // next caller a journal short one line with nothing to say so. In
+            // this order the worst case is a retry, not a loss.
             {
                 let mut state = self.locked();
-                let Some((number, entry)) = state.pending.pop_front() else {
+                let Some((number, entry)) = state.pending.front() else {
                     return 0;
                 };
-                let line = self.seal(number, &entry);
+                let line = self.seal(*number, entry);
                 state.journal.push(line);
+                state.pending.pop_front();
             }
 
-            Yielded::once().await;
+            yield_now().await;
         }
     }
 }
@@ -464,41 +467,10 @@ impl HealthProbe for BookProbe {
     }
 }
 
-// --------------------------------------------------------------------------
-// Cooperation
-// --------------------------------------------------------------------------
-
-/// Yields to the executor exactly once.
-///
-/// Hand-written because neither `kernel` nor `kernel-core` publishes a yield,
-/// and reaching for `tokio::task::yield_now` would make this crate depend on a
-/// runtime that its two lifecycle hooks otherwise never name.
-struct Yielded(bool);
-
-impl Yielded {
-    /// A yield that has not happened yet.
-    fn once() -> Self {
-        Yielded(false)
-    }
-}
-
-impl Future for Yielded {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        if self.0 {
-            Poll::Ready(())
-        } else {
-            self.0 = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use core::task::Waker;
+    use core::future::Future;
+    use core::task::{Context, Poll, Waker};
 
     use kernel::core::ConfigTree;
 
@@ -512,7 +484,7 @@ mod tests {
     /// `#[tokio::test]` is what this crate should use, and cannot: its
     /// manifest declares no dev-dependencies, so neither `tokio` nor
     /// `kernel-testkit` is nameable here. Everything awaited below either
-    /// completes at once or parks on [`Yielded`], which wakes itself, so a
+    /// completes at once or parks on [`yield_now`], which wakes itself, so a
     /// spinning driver is faithful — a timer would not be.
     fn drive<T>(future: impl Future<Output = T>) -> T {
         let mut future = Box::pin(future);
@@ -611,6 +583,29 @@ mod tests {
 
         assert_eq!(drive(book.flush(None)), 0);
         assert_eq!(book.locked().journal.len(), 3);
+    }
+
+    /// One commit per poll, and the entry is never in both places nor in
+    /// neither.
+    ///
+    /// The yield between two commits is the only point at which another task
+    /// can look, so it is the only point where a torn buffer would be visible.
+    /// A flush that popped the entry first and journalled it afterwards would
+    /// still pass a whole-flush assertion and fail this one.
+    #[test]
+    fn flush_commits_one_at_a_time() {
+        let book = book(8);
+        book.open([]);
+        for index in 1..=3 {
+            drive(book.append(Entry::new(format!("order-{index}"), index))).unwrap();
+        }
+
+        let mut future = Box::pin(book.flush(None));
+        let mut cx = Context::from_waker(Waker::noop());
+
+        assert!(future.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(book.locked().journal.len(), 1);
+        assert_eq!(book.pending(), 2);
     }
 
     #[test]

@@ -66,6 +66,22 @@
 //! one writes a mark to every sink when it starts, waits for the shutdown
 //! token, writes a closing mark and returns. That is the shortest shape that
 //! still obeys the one rule — `run` returns when the token fires.
+//!
+//! # Two things a reader must not copy from these sinks
+//!
+//! **They print, and printing is blocking I/O.** `println!` locks standard
+//! output and writes to a file descriptor from inside an `async fn`, on an
+//! executor thread that has other tasks waiting on it. It is done here because
+//! the visible output *is* what this example teaches, and it is done outside
+//! every mutex guard so that at least the lock is not held across the syscall.
+//! A sink that writes anywhere real hands the record to a writer task, or wraps
+//! the write in the runtime's blocking pool; it does not do this.
+//!
+//! **Failures go to telemetry, output goes to standard output.** One
+//! convention, applied everywhere in this bundle: what the sinks *keep* is the
+//! demonstration and is printed; what *fails* is a diagnostic and is recorded
+//! through [`RunContext::telemetry`], where an operator's collector reads it.
+//! A failure printed to standard output is a failure nothing aggregates.
 
 use core::fmt;
 use core::time::Duration;
@@ -75,6 +91,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use audit_contracts::{ARCHIVE, Record, Sink, SinkError};
 use kernel::{Bundle, ContractRef, Provider, Registry, RunContext, Runnable};
+use kernel_core::telemetry::{Level, Record as Diagnostic};
 use kernel_core::{
     Backoff, BoxFuture, BuildError, BundleManifest, Criticality, RegisterError, RestartPolicy,
     RunError, RunnableDescriptor,
@@ -96,6 +113,26 @@ const ARCHIVE_SOURCES: usize = 8;
 /// exactly enough restarts to get past the demonstration. Raise it and the
 /// demonstration lengthens; nothing else moves.
 const DELIBERATE_FAILURES: u32 = 2;
+
+// ---------------------------------------------------------------------------
+// One lock, one argument
+// ---------------------------------------------------------------------------
+
+/// Borrows `lock`, whatever a previous panic did to it.
+///
+/// The recovery is written once, here, because the argument for it is one
+/// argument and not one per lock. Taking a poisoned lock is defensible only
+/// when the state behind it cannot be *half* written, and both sinks below
+/// keep that true the same way: every fallible step — rendering a line,
+/// building the folded tally — happens before the guard is taken, and what
+/// happens under it is a single assignment.
+///
+/// Where that cannot be arranged, the recovery is not available and the honest
+/// call is `.expect()`: a stopped process beats a caller reading half of a
+/// value and carrying on.
+fn held<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
+    lock.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 // ---------------------------------------------------------------------------
 // The default binding
@@ -120,18 +157,29 @@ impl Journal {
         }
     }
 
-    /// The lines, whatever a previous panic did to the lock.
+    /// The lines. See [`held`] for why a poisoned lock is taken anyway.
     fn lines(&self) -> MutexGuard<'_, Vec<String>> {
-        self.lines.lock().unwrap_or_else(PoisonError::into_inner)
+        held(&self.lines)
     }
 }
 
 impl Sink for Journal {
+    /// Keeps one line, then prints it.
+    ///
+    /// The order is the point: the line is rendered before the guard, kept
+    /// under it, and printed after it. Printing under the guard would hold the
+    /// journal shut for the length of a write to a file descriptor, and would
+    /// do it inside an `async fn` — see this module's header for why neither
+    /// belongs in a sink that writes anywhere real.
     fn write(&self, record: Record) -> BoxFuture<'_, Result<(), SinkError>> {
         Box::pin(async move {
-            let mut lines = self.lines();
-            lines.push(format!("{}: {}", record.source, record.message));
-            println!("[journal] #{} {}", lines.len(), lines[lines.len() - 1]);
+            let line = format!("{}: {}", record.source, record.message);
+            let count = {
+                let mut lines = self.lines();
+                lines.push(line.clone());
+                lines.len()
+            };
+            println!("[journal] #{count} {line}");
             Ok(())
         })
     }
@@ -174,34 +222,46 @@ impl Archive {
         }
     }
 
-    /// The folded lines, whatever a previous panic did to the lock.
+    /// The folded lines. See [`held`] for why a poisoned lock is taken anyway.
     fn sources(&self) -> MutexGuard<'_, BTreeMap<&'static str, Tally>> {
-        self.sources.lock().unwrap_or_else(PoisonError::into_inner)
+        held(&self.sources)
     }
 }
 
 impl Sink for Archive {
+    /// Folds one record into its source's tally, then prints the fold.
+    ///
+    /// The tally is replaced in one assignment rather than mutated field by
+    /// field: `count += 1` followed by `last = ...` leaves, between the two, a
+    /// tally that counts a record it no longer holds — and the poison recovery
+    /// in [`held`] would hand exactly that to the next caller. One assignment
+    /// has no between.
     fn write(&self, record: Record) -> BoxFuture<'_, Result<(), SinkError>> {
         Box::pin(async move {
             if record.message.trim().is_empty() {
                 return Err(SinkError::Rejected("the record has no message".to_owned()));
             }
 
-            let mut sources = self.sources();
-            if !sources.contains_key(record.source) && sources.len() == self.capacity {
-                return Err(SinkError::Rejected(format!(
-                    "the archive holds {} sources and `{}` is not one of them",
-                    self.capacity, record.source
-                )));
-            }
+            let source = record.source;
+            let folded = {
+                let mut sources = self.sources();
+                if !sources.contains_key(source) && sources.len() == self.capacity {
+                    return Err(SinkError::Rejected(format!(
+                        "the archive holds {} sources and `{source}` is not one of them",
+                        self.capacity
+                    )));
+                }
 
-            let tally = sources.entry(record.source).or_default();
-            tally.count += 1;
-            tally.last = record.message;
-            println!(
-                "[archive] {} x{}, last: {}",
-                record.source, tally.count, tally.last
-            );
+                let tally = sources.entry(source).or_default();
+                *tally = Tally {
+                    count: tally.count + 1,
+                    last: record.message,
+                };
+                (tally.count, tally.last.clone())
+            };
+
+            // Outside the guard: see this module's header.
+            println!("[archive] {source} x{}, last: {}", folded.0, folded.1);
             Ok(())
         })
     }
@@ -258,11 +318,20 @@ impl Bookend {
     /// A sink refusing a mark is not a reason to skip the next sink and not a
     /// reason to fail the run: the archive refuses on purpose once it is full,
     /// and that is its answer, not a fault of the caller's.
-    async fn mark(&self, moment: &str) {
+    ///
+    /// The refusal is recorded rather than printed, which is the convention
+    /// this bundle holds to everywhere — see this module's header. The context
+    /// is a parameter for that reason alone: a mark needs nothing from the run
+    /// except somewhere to report a failure to.
+    async fn mark(&self, cx: &RunContext, moment: &str) {
         for sink in &self.sinks {
             let record = Record::new(NAME, format!("run {moment}"));
             if let Err(error) = sink.write(record).await {
-                println!("[bookend] {moment} not written: {error}");
+                cx.telemetry().record(
+                    Diagnostic::new(Level::Warn, "audit.mark_refused")
+                        .with("moment", moment.to_owned())
+                        .with("error", error.to_string()),
+                );
             }
         }
     }
@@ -301,18 +370,23 @@ impl Runnable for Bookend {
             // bundle still works; what is lost is the evidence.
             // ---------------------------------------------------------------
             if start < DELIBERATE_FAILURES {
-                let failure = DeliberateFailure(start + 1);
-                println!("[bookend] {failure}");
-                return Err(RunError::failed(cx.id(), Box::new(failure)));
+                // Returned, not printed. The supervisor records every failing
+                // runnable to telemetry with the runnable's own identity
+                // attached, so printing here would put the same fact in a
+                // second place under a worse name.
+                return Err(RunError::failed(
+                    cx.id(),
+                    Box::new(DeliberateFailure(start + 1)),
+                ));
             }
 
-            self.mark("opened").await;
+            self.mark(&cx, "opened").await;
 
             // The one rule a runnable must obey. There is nothing to race here
             // — no timer, no socket — so the await is the whole body.
             cx.shutdown().draining().await;
 
-            self.mark("closing").await;
+            self.mark(&cx, "closing").await;
             Ok(())
         })
     }
@@ -373,6 +447,8 @@ impl Bundle for Bundled {
 
 #[cfg(test)]
 mod tests {
+    use kernel_core::telemetry::{RecordingTelemetry, Telemetry};
+
     use super::*;
 
     /// Resolves a future that this crate's sinks never park in.
@@ -476,6 +552,41 @@ mod tests {
 
         // Opened and closing, in both sinks.
         assert_eq!(journal.lines().len(), 2);
+    }
+
+    /// A sink refusing a mark is recorded, never printed, and never fails the
+    /// run.
+    ///
+    /// An archive with room for nothing refuses every source, which is the
+    /// same refusal a full one gives. The run still ends clean and the reason
+    /// is in telemetry, where a collector finds it — the convention this
+    /// bundle states in its header, asserted rather than described.
+    #[tokio::test]
+    async fn refused_mark_is_recorded() {
+        let telemetry = Arc::new(RecordingTelemetry::new());
+        let bookend = Arc::new(Bookend::new(vec![
+            Arc::new(Archive::new(0)) as Arc<dyn Sink>
+        ]));
+        bookend.starts.store(DELIBERATE_FAILURES, Ordering::Relaxed);
+
+        let (cx, controller) = RunContext::builder()
+            .with_telemetry(Arc::clone(&telemetry) as Arc<dyn Telemetry>)
+            .build();
+        controller.begin_draining();
+
+        Arc::clone(&bookend)
+            .run(cx)
+            .await
+            .expect("a refused mark is the sink's answer, not a failed run");
+
+        assert!(telemetry.contains("audit.mark_refused"));
+        let refusals: Vec<String> = telemetry
+            .records()
+            .iter()
+            .filter(|record| record.event == "audit.mark_refused")
+            .filter_map(|record| record.field("moment").map(ToString::to_string))
+            .collect();
+        assert_eq!(refusals, ["opened", "closing"]);
     }
 
     /// The demonstration itself: the first starts fail, the next one settles,

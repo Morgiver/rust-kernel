@@ -14,25 +14,43 @@
 //! Both jobs need a [`Registry`], and a `Registry` is handed to
 //! [`Bundle::register`] and to nowhere else: [`KernelBuilder`] has `bundle`,
 //! `config_source`, `telemetry`, `shutdown_policy` and `capture_signals`, and
-//! no way to register a listener, a component or a contribution directly. So
-//! the application writes one bundle of its own and lists it last — last
-//! because ties in the boot order break on registration order, which is what
-//! puts [`Vitals`] behind every component whose probe it is about to read.
+//! no verb of its own. The seven verbs live on the registry and stay there.
+//!
+//! What the application does NOT need is a type and two trait methods to reach
+//! that form. [`FnBundle`] is a bundle whose registration pass is a closure,
+//! so the three lines below are three lines, listed last — last because ties
+//! in the boot order break on registration order, which is what puts
+//! [`Vitals`] behind every component whose probe it is about to read.
 //!
 //! It is still an application-layer bundle, and it obeys the same rule as the
 //! other three: it names no `*-bundle` crate. It happens to name none of the
 //! `*-contracts` crates either, because health and lifecycle are the kernel's
 //! vocabulary rather than this application's.
 //!
+//! # What this bundle prints, and where a copier must stop
+//!
+//! Both jobs below end in `println!`, and both do it from inside a kernel
+//! trait: [`Component::boot`] for the health line, [`Listener::on_event`] for
+//! the two lifecycle lines. Writing to standard output blocks the executor
+//! thread it runs on. It is acceptable here for one reason — this is the
+//! application layer, the lines are the program's own output, and there are
+//! four of them for the whole run.
+//!
+//! A component or listener that writes an unbounded number of lines, or writes
+//! anywhere slower than a terminal, does not do this: it hands what it has to
+//! something that owns the writing. The convention the features hold to is the
+//! other one — a failure goes to telemetry, never to standard output.
+//!
 //! [`KernelBuilder`]: kernel::KernelBuilder
+//! [`Bundle::register`]: kernel::Bundle::register
+//! [`Registry`]: kernel::Registry
 
 use std::sync::Arc;
 
-use kernel::core::{ComponentError, Health, ListenerError, RegisterError};
+use kernel::core::{ComponentError, ListenerError};
 use kernel::{
-    BootContext, BoxFuture, Bundle, BundleManifest, Component, ComponentDescriptor, Flow,
-    HealthReport, Listener, ListenerContext, Priority, Probe, Provider, Registry, Running,
-    ShutdownRequested,
+    BootContext, BoxFuture, BundleManifest, Component, ComponentDescriptor, Flow, FnBundle,
+    Listener, ListenerContext, Priority, Provider, Running, ShutdownRequested, aggregate,
 };
 
 /// The name this bundle registers under, and the prefix its output carries.
@@ -46,8 +64,8 @@ const NAME: &str = "app";
 ///
 /// Once, and at that moment: phase four is over but phase five has not started,
 /// so what it prints is the state each feature booted into, not the state it
-/// settles at. A process that answers a health endpoint would read the probes
-/// again on every request — see [`fold`] for why this one cannot.
+/// settles at. A process that answers a health request would call
+/// [`aggregate`] again on every one; nothing about it is tied to boot.
 ///
 /// It owns nothing and releases nothing, so it has no `shutdown`: the whole
 /// component is one read of a table other bundles filled.
@@ -62,57 +80,21 @@ impl Component for Vitals {
         ComponentDescriptor::new()
     }
 
+    /// One call, and no loop of this application's own.
+    ///
+    /// [`aggregate`] takes the table of contributed extension points, which
+    /// [`BootContext::extensions`] hands out, and it does two things a
+    /// hand-written fold does not: it runs the checks concurrently, and it caps
+    /// each one at [`PROBE_TIMEOUT`](kernel::PROBE_TIMEOUT) so that a probe
+    /// which never answers becomes a verdict naming it instead of a boot that
+    /// hangs until the component's own timeout fires.
+    ///
+    /// The report renders itself, so there is no rendering here either.
     fn boot<'a>(&'a self, cx: &'a BootContext<'a>) -> BoxFuture<'a, Result<(), ComponentError>> {
         Box::pin(async move {
-            report(&fold(cx.collect::<Probe>()).await);
+            println!("[{NAME}] health: {}", aggregate(cx.extensions()).await);
             Ok(())
         })
-    }
-}
-
-/// Runs every probe and folds the verdicts into the kernel's own report type.
-///
-/// This is [`kernel::aggregate`] written out by hand, and it is written out
-/// because that function cannot be called from here. It takes an
-/// `&ExtensionPoints`, and no public accessor anywhere hands one out:
-/// `Kernel` exposes `handle`, `container` and `run`; `Container` exposes
-/// bindings, config, telemetry and the handle; `BootContext` exposes
-/// [`collect`](BootContext::collect), which returns borrowed items and not the
-/// table they came from. So the one publicly reachable form of the contributed
-/// probes is a `Vec<&Probe>` inside a component's `boot`, and the fold has to
-/// happen there.
-///
-/// What the hand-written version loses, and a reader should not copy: the
-/// kernel's runs the checks concurrently and caps each one at
-/// [`PROBE_TIMEOUT`](kernel::PROBE_TIMEOUT), so a probe that never answers
-/// becomes a verdict naming it. This loop is sequential and unbounded — a deaf
-/// probe hangs the boot until the component's boot timeout fires.
-async fn fold(probes: Vec<&Probe>) -> HealthReport {
-    let mut checked = Vec::with_capacity(probes.len());
-    for probe in probes {
-        checked.push((probe.get().name(), probe.get().check().await));
-    }
-
-    HealthReport {
-        overall: Health::worst_of(checked.iter().map(|(_, verdict)| verdict.clone())),
-        probes: checked,
-    }
-}
-
-/// Prints one report, overall verdict first.
-fn report(report: &HealthReport) {
-    println!("[{NAME}] health: {}", verdict(&report.overall));
-    for (probe, health) in &report.probes {
-        println!("[{NAME}]   {probe}: {}", verdict(health));
-    }
-}
-
-/// Renders one verdict on one line. `Health` has `Debug`, not `Display`.
-fn verdict(health: &Health) -> String {
-    match health {
-        Health::Up => "up".to_owned(),
-        Health::Degraded { detail } => format!("degraded — {detail}"),
-        Health::Down { detail } => format!("down — {detail}"),
     }
 }
 
@@ -166,35 +148,35 @@ impl Listener<ShutdownRequested> for Watch {
 // ---------------------------------------------------------------------------
 
 /// The application's own bundle. Listed last.
-#[derive(Debug, Default)]
-pub struct Console;
-
-impl Bundle for Console {
-    /// Requires nothing. It reads what other bundles contributed, and a
-    /// contribution is not a contract: nothing here would fail if the other
-    /// three registered no probe at all.
-    fn manifest(&self) -> BundleManifest {
-        BundleManifest::new(NAME, "0.1.0")
-    }
-
-    fn register(&self, registry: &mut Registry) -> Result<(), RegisterError> {
+///
+/// It requires nothing: it reads what other bundles contributed, and a
+/// contribution is not a contract, so nothing here would fail if the other
+/// three registered no probe at all. The manifest is stated anyway, because a
+/// version is what a diagnostic naming this bundle prints.
+pub fn bundle() -> FnBundle {
+    FnBundle::new(NAME, |registry| {
         registry.component(Provider::from_value(Arc::new(Vitals)));
 
         registry.listen::<Running, _>(Watch, Priority::NORMAL);
         registry.listen::<ShutdownRequested, _>(Watch, Priority::NORMAL);
 
         Ok(())
-    }
+    })
+    .manifest(BundleManifest::new(NAME, "0.1.0"))
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::core::{Extension, HealthProbe};
+    use kernel::Probe;
+    use kernel::core::{Extension, Health, HealthProbe};
 
     use super::*;
 
-    /// A probe with a fixed verdict, so the fold can be exercised without a
-    /// kernel.
+    /// A probe with a fixed verdict, so the aggregate can be exercised without
+    /// a kernel.
+    ///
+    /// Hand-written: `kernel-testkit` ships a recorder, a parking runnable and
+    /// a lifecycle-logging component, and no health probe.
     struct Fixed(&'static str, Health);
 
     impl Extension for Fixed {}
@@ -210,28 +192,41 @@ mod tests {
         }
     }
 
+    /// The table the kernel would have filled, filled by hand.
+    fn contributed(probes: [Probe; 2]) -> kernel::component::DetachedBoot {
+        let [first, second] = probes;
+        BootContext::builder()
+            .with_contribution(first)
+            .with_contribution(second)
+            .build()
+    }
+
+    /// What this bundle contributes to the report is one call: the worst
+    /// verdict wins, and every probe is named under it.
     #[tokio::test]
-    async fn fold_keeps_the_worst() {
-        let probes = [
+    async fn aggregate_keeps_the_worst() {
+        let detached = contributed([
             Probe::new(Fixed("first", Health::Up)),
             Probe::new(Fixed("second", Health::degraded("a backlog"))),
-        ];
+        ]);
 
-        let report = fold(probes.iter().collect()).await;
+        let report = aggregate(detached.context().extensions()).await;
 
         assert_eq!(report.overall, Health::degraded("a backlog"));
-        assert_eq!(report.probes.len(), 2);
-        assert_eq!(report.probes[0].0, "first");
+        assert_eq!(
+            report.to_string(),
+            "degraded: a backlog\n  first: up\n  second: degraded: a backlog"
+        );
     }
 
+    /// Nothing contributed is still a verdict, and still one line.
     #[tokio::test]
-    async fn empty_fold_is_up() {
-        assert_eq!(fold(Vec::new()).await.overall, Health::Up);
-    }
+    async fn empty_report_is_up() {
+        let detached = BootContext::builder().build();
 
-    #[test]
-    fn verdicts_read_plainly() {
-        assert_eq!(verdict(&Health::Up), "up");
-        assert_eq!(verdict(&Health::down("closed")), "down — closed");
+        let report = aggregate(detached.context().extensions()).await;
+
+        assert_eq!(report.overall, Health::Up);
+        assert_eq!(report.to_string(), "up");
     }
 }

@@ -21,7 +21,6 @@ use kernel::{
 };
 
 use crate::contracts::{Ledger, OpeningNote};
-use crate::settings::field;
 
 /// The name this bundle publishes.
 const NAME: &str = "orders";
@@ -44,8 +43,8 @@ struct Settings {
 impl FromConfig for Settings {
     fn from_config(node: &ConfigNode) -> Result<Self, ConfigError> {
         Ok(Self {
-            every: field(node, "every")?,
-            batch: field(node, "batch")?,
+            every: node.field("every")?,
+            batch: node.field("batch")?,
         })
     }
 }
@@ -75,15 +74,19 @@ impl Runnable for Feed {
         Box::pin(async move {
             let mut round: u64 = 0;
 
-            loop {
-                // The one rule a runnable must obey: the token wins the race.
-                // A loop that only slept would be abandoned at its deadline
-                // instead of returning.
-                tokio::select! {
-                    () = cx.shutdown().draining() => break,
-                    () = tokio::time::sleep(self.every) => {}
-                }
-
+            // The one rule a runnable must obey: the token wins the race. A
+            // loop that only slept would be abandoned at its deadline instead
+            // of returning — and this is the wait that holds the rule, so this
+            // crate names no timer and writes no `select!` of its own.
+            //
+            // Draining means *stop taking new work*, and a new round is new
+            // work: the wait ends, `is_elapsed` is false, and the loop leaves.
+            while cx
+                .shutdown()
+                .sleep_until_draining(self.every)
+                .await
+                .is_elapsed()
+            {
                 round += 1;
                 for item in 0..self.batch {
                     let number = self.ledger.record(&format!("order {round}.{item}"));
@@ -168,18 +171,21 @@ impl Bundle for Bundled {
 
 #[cfg(test)]
 mod tests {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
 
     /// A ledger that counts, so the feed can be run without a kernel.
-    struct Counter;
+    #[derive(Default)]
+    struct Counter(AtomicU64);
 
     impl Ledger for Counter {
         fn record(&self, _order: &str) -> u64 {
-            0
+            self.0.fetch_add(1, Ordering::Relaxed) + 1
         }
 
         fn written(&self) -> u64 {
-            0
+            self.0.load(Ordering::Relaxed)
         }
     }
 
@@ -188,13 +194,18 @@ mod tests {
     ///
     /// Nothing waits, so nothing needs paused time: the ladder is moved before
     /// the runnable is entered.
+    ///
+    /// Draining means *stop taking new work*, so the round the wait was about
+    /// to start is not started: the ledger is untouched. A loop that read the
+    /// token only after doing its work would write once and still return.
     #[tokio::test]
     async fn returns_on_token() {
         let (cx, controller) = RunContext::detached();
         controller.begin_draining();
 
+        let ledger = Arc::new(Counter::default());
         let feed = Arc::new(Feed {
-            ledger: Arc::new(Counter),
+            ledger: Arc::clone(&ledger) as Arc<dyn Ledger>,
             // Long enough that a runnable which slept first would hang the
             // test rather than pass it slowly.
             every: Duration::from_secs(3600),
@@ -202,5 +213,6 @@ mod tests {
         });
 
         assert!(feed.run(cx).await.is_ok());
+        assert_eq!(ledger.written(), 0, "a round was started while draining");
     }
 }

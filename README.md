@@ -245,13 +245,17 @@ if you want to run `cargo deny --all-features check --deny warnings` locally.
 Verified against the current tree, not remembered:
 
 - **Four crates**, phases one to seven implemented.
-- **451 tests pass** on `cargo test --workspace`: 397 unit and integration, 54
-  doctests, plus two doctests ignored on purpose. Per binary — `kernel` 235
-  unit, 7 (`audit`), 11 (`lifecycle`); `kernel-core` 92 unit and no integration
-  target; `kernel-macros` 14 (`from_config`), 4 (`listener`), 12 (`provider`),
-  2 (`surface`); `kernel-testkit` 8 (`harness`), 11 (`substitution`);
-  `minimal` 1. Doctests: `kernel` 17, `kernel-core` 33, `kernel-macros` 4,
-  `kernel-testkit` 0.
+- **599 tests pass** on `cargo test --workspace`: 525 unit and integration, 74
+  doctests, plus two doctests ignored on purpose. Per binary — `kernel` 279
+  unit, 7 (`audit`), 11 (`lifecycle`); `kernel-core` 103 unit and no
+  integration target; `kernel-macros` 14 (`from_config`), 4 (`listener`), 12
+  (`provider`), 2 (`surface`); `kernel-testkit` 5 (`doubles`), 11 (`harness`),
+  5 (`missing`), 11 (`substitution`); `minimal` 1; the medium example — `app` 6
+  unit, 7 (`isolation`), 5 (`standalone`), `ledger-component` 15,
+  `ledger-contracts` 3, `ledger-bundle` 1, `orders-contracts` 3,
+  `orders-bundle` 8, `audit-contracts` 3, `audit-bundle` 9. Doctests: `kernel`
+  24, `kernel-core` 36, `kernel-macros` 4, `kernel-testkit` 1, and 9 across the
+  example crates.
 - **Seven guards run green**, all executable scripts under `ci/`. Two further
   boundaries — `requires` conformance and the sealed container — are held by the
   code and have nothing to run; see [Guards](#guards).

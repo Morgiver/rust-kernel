@@ -13,18 +13,20 @@
 //! `ledger-contracts` and `audit-contracts`, which is the same door the real
 //! implementations come through.
 //!
-//! The last test does not confirm the promise, it bounds it: a contract a
-//! *listener* resolves is invisible to phase three, so it is absent from the
-//! list and the bundle boots without it anyway. See `listener_needs_go_unlisted`.
+//! The list holds for listeners too, and that is the last test here: a contract
+//! a listener resolves is declared where it is resolved, so phase three checks
+//! it with everything else and it is on the list like everything else.
 
-use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use audit_contracts::{ARCHIVE, Record, Sink, SinkError};
-use kernel::core::{ComponentDescriptor, ComponentError, ConfigNode, ConfigTree, ContractRef};
+use kernel::core::{
+    ComponentDescriptor, ComponentError, ConfigNode, ConfigTree, ContractRef, KernelError,
+    ResolveError,
+};
 use kernel::{BootContext, BoxFuture, Component, MemorySource, ShutdownContext};
-use kernel_testkit::{TestBuilder, missing_contracts};
+use kernel_testkit::{LifecycleLog, Recorder, TestBuilder, missing_contracts};
 use ledger_contracts::{Entry, Ledger, LedgerError};
 use orders_contracts::{Order, OrderBook};
 
@@ -38,27 +40,29 @@ use orders_contracts::{Order, OrderBook};
 /// the nature of what it replaces, so this one is handed to
 /// `substitute_component` as well and the kernel boots and stops it like any
 /// other — `double_is_booted_too` is where that is checked.
+///
+/// Neither half is written out by hand. What it keeps goes in a [`Recorder`],
+/// and the lifecycle calls the kernel makes on it are counted by a
+/// [`LifecycleLog`] it delegates both hooks to: the testkit ships the parts
+/// that are not about `Ledger`, and only the part that names the contract is
+/// written here — because only a crate that can name the contract can
+/// implement it.
 #[derive(Debug, Default)]
 struct Notebook {
-    entries: Mutex<Vec<Entry>>,
-    booted: AtomicBool,
-    stopped: AtomicBool,
+    entries: Recorder<Entry>,
+    lifecycle: LifecycleLog,
 }
 
 impl Notebook {
     fn len(&self) -> u64 {
-        let held = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        u64::try_from(held.len()).unwrap_or(u64::MAX)
+        u64::try_from(self.entries.len()).unwrap_or(u64::MAX)
     }
 }
 
 impl Ledger for Notebook {
     fn append(&self, entry: Entry) -> BoxFuture<'_, Result<u64, LedgerError>> {
         Box::pin(async move {
-            self.entries
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(entry);
+            self.entries.record(entry);
             Ok(self.len())
         })
     }
@@ -77,33 +81,26 @@ impl Component for Notebook {
         ComponentDescriptor::new()
     }
 
-    fn boot<'a>(&'a self, _cx: &'a BootContext<'a>) -> BoxFuture<'a, Result<(), ComponentError>> {
-        Box::pin(async move {
-            self.booted.store(true, Ordering::Relaxed);
-            Ok(())
-        })
+    fn boot<'a>(&'a self, cx: &'a BootContext<'a>) -> BoxFuture<'a, Result<(), ComponentError>> {
+        self.lifecycle.boot(cx)
     }
 
     fn shutdown<'a>(
         &'a self,
-        _cx: &'a ShutdownContext<'a>,
+        cx: &'a ShutdownContext<'a>,
     ) -> BoxFuture<'a, Result<(), ComponentError>> {
-        Box::pin(async move {
-            self.stopped.store(true, Ordering::Relaxed);
-            Ok(())
-        })
+        self.lifecycle.shutdown(cx)
     }
 }
 
 /// Stands in for `dyn Sink`: keeps what was written, in order.
 #[derive(Debug, Default)]
-struct Paper(Mutex<Vec<Record>>);
+struct Paper(Recorder<Record>);
 
 impl Paper {
     fn messages(&self) -> Vec<String> {
         self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .items()
             .iter()
             .map(|record| record.message.clone())
             .collect()
@@ -113,10 +110,7 @@ impl Paper {
 impl Sink for Paper {
     fn write(&self, record: Record) -> BoxFuture<'_, Result<(), SinkError>> {
         Box::pin(async move {
-            self.0
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(record);
+            self.0.record(record);
             Ok(())
         })
     }
@@ -147,6 +141,7 @@ fn settings(every: &'static str) -> MemorySource {
 /// The doubles the list asked for, held so a test can read them afterwards.
 struct Stand {
     ledger: Arc<Notebook>,
+    journal: Arc<Paper>,
     archive: Arc<Paper>,
 }
 
@@ -154,6 +149,7 @@ impl Stand {
     fn new() -> Self {
         Self {
             ledger: Arc::new(Notebook::default()),
+            journal: Arc::new(Paper::default()),
             archive: Arc::new(Paper::default()),
         }
     }
@@ -164,6 +160,7 @@ impl Stand {
             .config_source(settings(every))
             .bundle(orders_bundle::Bundled)
             .substitute::<dyn Ledger>(Arc::clone(&self.ledger) as Arc<dyn Ledger>)
+            .substitute::<dyn Sink>(Arc::clone(&self.journal) as Arc<dyn Sink>)
             .substitute_named::<dyn Sink>(ARCHIVE, Arc::clone(&self.archive) as Arc<dyn Sink>)
     }
 }
@@ -172,7 +169,7 @@ impl Stand {
 // The round trip
 // ---------------------------------------------------------------------------
 
-/// Phase three names the two contracts nobody in this graph provides.
+/// Phase three names the three contracts nobody in this graph provides.
 ///
 /// `Ok` with a list is the answer being asked for; `Err` would mean the
 /// assembly never reached phase three, which is a different fact and would say
@@ -186,11 +183,14 @@ fn lists_what_orders_needs() {
         [
             ContractRef::of::<dyn Ledger>(),
             ContractRef::named::<dyn Sink>(ARCHIVE),
+            ContractRef::of::<dyn Sink>(),
         ]
     );
     // The named binding is not the default one, and the list says which is
-    // wanted: a double provided under no name would leave this unsatisfied.
+    // wanted: a double provided under no name would leave this unsatisfied,
+    // and the default one is a separate line rather than the same line twice.
     assert_eq!(missing[1].name(), Some(ARCHIVE));
+    assert_eq!(missing[2].name(), None);
 }
 
 /// The bundle boots alone on one double per listed contract.
@@ -236,11 +236,11 @@ async fn double_is_booted_too() {
         .await
         .expect("orders boots alongside the component double");
 
-    assert!(stand.ledger.booted.load(Ordering::Relaxed));
-    assert!(!stand.ledger.stopped.load(Ordering::Relaxed));
+    assert_eq!(stand.ledger.lifecycle.boots(), 1);
+    assert_eq!(stand.ledger.lifecycle.stops(), 0);
 
     assert!(harness.stop().await.is_success());
-    assert!(stand.ledger.stopped.load(Ordering::Relaxed));
+    assert_eq!(stand.ledger.lifecycle.stops(), 1);
 }
 
 /// The desk returns on the shutdown token rather than being abandoned.
@@ -262,20 +262,59 @@ async fn desk_returns_on_shutdown() {
     assert!(telemetry.contains("runnable.finished"));
 }
 
-/// What a listener resolves is not on the list, and phase three never sees it.
+/// What a listener resolves is on the list, and phase three refuses the graph
+/// without it.
 ///
 /// `orders` has two listeners that resolve the *default* `dyn Sink` from the
-/// container while an event is being dispatched. Nothing declares that:
-/// `Registry::listen` takes no requirements, and the bundle manifest names only
-/// the archive. So phase three has nothing to check, the list above is short by
-/// one, and a graph built from that list boots clean and then fails a listener
-/// on every batch.
+/// container while an event is being dispatched. Nothing can observe that from
+/// outside the listener, so the bundle declares it on the handle
+/// `Registry::listen` hands back — and from there it is an ordinary
+/// requirement: reported before anything boots, attributed to the event whose
+/// handling needs it, and counted in the list above.
 ///
-/// This test pins the current behaviour so that closing the hole breaks it
-/// loudly. Until then, the promise "the list IS the doubles to write" holds for
-/// providers, runnables and manifests — not for listeners.
+/// The graph built here is the one a reader would have assembled from a list
+/// short by one. It does not boot and then fail a listener on every batch; it
+/// does not boot at all.
+#[tokio::test]
+async fn listener_needs_are_listed() {
+    let stand = Stand::new();
+
+    let refused = TestBuilder::new()
+        .config_source(settings("1h"))
+        .bundle(orders_bundle::Bundled)
+        .substitute::<dyn Ledger>(Arc::clone(&stand.ledger) as Arc<dyn Ledger>)
+        .substitute_named::<dyn Sink>(ARCHIVE, Arc::clone(&stand.archive) as Arc<dyn Sink>)
+        .start()
+        .await
+        .expect_err("phase three refuses a graph whose listener needs are unmet");
+
+    let KernelError::Resolve(errors) = refused else {
+        panic!("expected a resolution failure, got {refused:?}");
+    };
+    let blamed: Vec<&'static str> = errors
+        .iter()
+        .filter_map(|error| match error {
+            ResolveError::MissingContract {
+                required_by,
+                contract,
+            } if *contract == ContractRef::of::<dyn Sink>() => Some(*required_by),
+            _ => None,
+        })
+        .collect();
+    // Two listeners, and the manifest that declares what they resolve: three
+    // things to change, so three lines rather than one.
+    assert_eq!(blamed, ["orders.proposed", "orders.batch_closed", "orders"]);
+
+    // Nothing was booted, so nothing was stopped either.
+    assert_eq!(stand.ledger.lifecycle.boots(), 0);
+}
+
+/// The listeners that were checked do their work, on the sink they asked for.
+///
+/// The complement of the test above: with every listed contract provided, the
+/// two listeners resolve what they declared and the audit trail fills.
 #[tokio::test(start_paused = true)]
-async fn listener_needs_go_unlisted() {
+async fn declared_listeners_write() {
     let stand = Stand::new();
     let harness = stand.builder("10ms").start().await.expect("the desk runs");
     let telemetry = harness.telemetry();
@@ -284,20 +323,37 @@ async fn listener_needs_go_unlisted() {
     tokio::time::sleep(Duration::from_millis(25)).await;
     assert!(harness.stop().await.is_success());
 
-    // Orders did reach the ledger: the graph is not broken, only blind.
     assert!(stand.ledger.count().await.unwrap() > 0);
+    assert!(!telemetry.contains("dispatcher.listener_failed"));
 
-    let unresolved: Vec<String> = telemetry
-        .records()
-        .iter()
-        .filter(|record| record.event == "dispatcher.listener_failed")
-        .filter_map(|record| record.field("error").map(ToString::to_string))
-        .collect();
-    assert!(!unresolved.is_empty(), "a listener resolved nothing at all");
+    let trail = stand.journal.messages();
     assert!(
-        unresolved
-            .iter()
-            .all(|error| error.contains("no provider for dyn audit_contracts::Sink")),
-        "{unresolved:?}"
+        trail.iter().any(|line| line.starts_with("proposed ")),
+        "{trail:?}"
+    );
+}
+
+/// A batch never leaves the ledger holding what the screen held.
+///
+/// The cap is 250 and the second order of every batch is worth 200, so nothing
+/// here is vetoed — what this pins is the other direction: every entry in the
+/// ledger is one the walk allowed, counted by the desk as placed.
+#[tokio::test(start_paused = true)]
+async fn ledger_holds_only_allowed() {
+    let stand = Stand::new();
+    let harness = stand.builder("10ms").start().await.expect("the desk runs");
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(harness.stop().await.is_success());
+
+    let placed = stand
+        .journal
+        .messages()
+        .iter()
+        .filter(|line| line.starts_with("proposed "))
+        .count();
+    assert_eq!(
+        u64::try_from(placed).unwrap_or(u64::MAX),
+        stand.ledger.count().await.unwrap()
     );
 }

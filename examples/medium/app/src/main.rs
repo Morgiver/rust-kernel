@@ -19,7 +19,8 @@
 //! * `ledger` — a contract, a component that owns a resource, an extension
 //!   point read at boot, a health probe.
 //! * `orders` — a runnable, a scope per unit of work, three listeners on one
-//!   event, a second probe. It consumes the other two through their traits.
+//!   event dispatched before the commit they can veto, a second probe. It
+//!   consumes the other two through their traits.
 //! * `audit` — one contract bound twice, and an ancillary runnable that fails
 //!   on purpose to show a restart.
 //!
@@ -31,9 +32,10 @@
 //! cargo run -p app
 //! ```
 //!
-//! The desk places a batch of orders every 500 ms; each one is appended to the
-//! ledger and written to the audit sinks, which print what they keep. Press
-//! Ctrl-C and the kernel drains, stops and exits 0.
+//! The desk offers a batch of orders every 500 ms. Each one is dispatched for
+//! screening first, and only what the screen allows is appended to the ledger;
+//! the audit sinks print what they keep. Press Ctrl-C and the kernel drains,
+//! stops and exits 0.
 //!
 //! Every value the features read comes from the configuration chain below, so
 //! any of them can be moved from the environment:
@@ -147,7 +149,7 @@ async fn main() -> ExitCode {
         .bundle(orders_bundle::Bundled)
         // Last, so its component boots after every component whose probe it
         // reads: ties in the boot order break on registration order.
-        .bundle(console::Console)
+        .bundle(console::bundle())
         .build()
         .await
     {

@@ -20,6 +20,7 @@
 //! ladder moves so those notes reach whoever reads the request.
 
 use core::fmt;
+use core::time::Duration;
 use std::sync::Arc;
 
 use kernel_core::{
@@ -27,6 +28,7 @@ use kernel_core::{
     RunnableId, ShutdownError, ShutdownPolicy, Telemetry,
 };
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 
 use crate::boot::{Booted, boot, rollback};
 use crate::bundle::Bundle;
@@ -67,6 +69,8 @@ const STOPPED: &str = "kernel.stopped";
 const LISTENER_FAILED: &str = "kernel.request_listener_failed";
 /// Telemetry event name for a runnable that could not be resolved at start.
 const START_FAILED: &str = "kernel.runnable_start_failed";
+/// Telemetry event name for detached emissions that outlived the stop.
+const EMISSIONS_LEFT: &str = "kernel.emissions_left";
 
 /// Unit a failure of the kernel's own driver is attributed to.
 ///
@@ -326,6 +330,21 @@ impl Kernel {
         self.resolved.container.handle()
     }
 
+    /// The dispatcher phase three built, for a caller that wants to reach the
+    /// listeners without running the kernel.
+    ///
+    /// It is the very dispatcher every phase publishes through, so an event
+    /// emitted here reaches the same table a component's would. Its main use
+    /// outside a run is [`EventDispatcher::settle`], which resolves once every
+    /// detached emission has finished walking that table: without this
+    /// accessor it is reachable only from inside a boot, run or shutdown
+    /// context, and a caller that emitted before running had no way to wait
+    /// for what it emitted.
+    #[must_use]
+    pub fn dispatcher(&self) -> &Arc<EventDispatcher> {
+        &self.resolved.dispatcher
+    }
+
     /// The container, for a caller that wants to reach into the graph before
     /// running.
     ///
@@ -348,11 +367,15 @@ impl Kernel {
     /// stopped one after another and each gets `stop` afresh, counted from the
     /// moment its own `shutdown` is called.
     ///
+    /// The detached emissions are awaited twice — once before the components
+    /// go down, once after the last event of the run — and each wait is capped
+    /// at `stop` as well.
+    ///
     /// Worst case for a whole shutdown is therefore
-    /// `drain + stop + (stop × components)` — it grows with the number of
-    /// components, and that is the price, stated rather than hidden. What it
-    /// buys is the rule that a unit is never abandoned because another unit
-    /// overran. A shared deadline would let one slow component consume the
+    /// `drain + stop + (stop × components) + 2 × stop` — it grows with the
+    /// number of components, and that is the price, stated rather than hidden.
+    /// What it buys is the rule that a unit is never abandoned because another
+    /// unit overran. A shared deadline would let one slow component consume the
     /// walk's budget and have its neighbour cut for it, which reports a failure
     /// against a unit that did nothing wrong.
     ///
@@ -527,6 +550,12 @@ async fn drive(kernel: Kernel) -> Outcome {
     // the only place either rung is moved during a normal stop.
     let errors = supervisor.stop(&controller).await;
 
+    // Before the components go down. A notification a runnable emitted on its
+    // way out reaches listeners that resolve through the container, and a
+    // listener that resolves a component after `rollback` reaches one that has
+    // already been shut down.
+    settle(&dispatcher, policy.stop, &telemetry).await;
+
     // The components get a stop budget of their own rather than whatever the
     // runnables left behind, and each component gets one rather than sharing
     // the walk's. Sharing a deadline makes units compete: a runnable that spent
@@ -551,15 +580,71 @@ async fn drive(kernel: Kernel) -> Outcome {
         .iter()
         .filter(|error| matches!(error.kind(), RunErrorKind::DeadlineExceeded))
         .count();
+    // Every abnormal ending of the whole run, restarts included — which is why
+    // it is no longer called `errors`. An ancillary runnable that failed and
+    // was restarted is in this total, already reported as `runnable.failed`
+    // seconds earlier, and a successful exit whose last line read `errors=2`
+    // sent an operator hunting for a failure that had been handled.
+    let failures = errors.len();
+    let outcome = outcome_of(reason, errors, still_running);
+    // What nothing recovered from: the failures the outcome itself carries.
+    // Zero on every successful exit, by construction.
+    let unhandled = unhandled_of(&outcome);
     telemetry.record(
         Record::new(Level::Info, STOPPED)
             .with("components", count(stopped.len()))
             .with("abandoned", count(abandoned))
-            .with("errors", count(errors.len())),
+            .with("unhandled", count(unhandled))
+            .with("run_failures", count(failures)),
     );
-    dispatcher.emit(Stopped { abandoned });
+    dispatcher.emit(Stopped {
+        abandoned,
+        unhandled,
+        run_failures: failures,
+    });
 
-    outcome_of(reason, errors, still_running)
+    // The last emission of the run, waited for rather than left to race the end
+    // of the process.
+    settle(&dispatcher, policy.stop, &telemetry).await;
+
+    outcome
+}
+
+/// Waits for the detached emissions to reach their listeners, and gives up
+/// after `budget`.
+///
+/// [`EventDispatcher::emit`] returns before its listeners run, so without this
+/// every notification emitted late in a run is a race against the end of the
+/// process — one the notification loses often enough that no test can assert on
+/// it. Awaiting the emissions here is what makes the second dispatch mode
+/// deliverable rather than best-effort.
+///
+/// The wait is bounded like every other rung of the ladder: an emission is a
+/// notification, and a listener that never returns must not hold the process
+/// down. An overrun is recorded with what is still outstanding, and the stop
+/// continues.
+async fn settle(dispatcher: &EventDispatcher, budget: Duration, telemetry: &Arc<dyn Telemetry>) {
+    if timeout(budget, dispatcher.settle()).await.is_err() {
+        telemetry.record(
+            Record::new(Level::Warn, EMISSIONS_LEFT)
+                .with("in_flight", count(dispatcher.in_flight())),
+        );
+    }
+}
+
+/// How many failures the outcome carries — the ones nothing recovered from.
+///
+/// This is what an operator reads on the last line of a run, so it counts what
+/// is still open rather than everything that ever went wrong. A run that ended
+/// well carries none; one that failed carries the errors that made it fail.
+fn unhandled_of(outcome: &Outcome) -> usize {
+    match outcome {
+        Outcome::Failed(KernelError::Run(errors)) => errors.len(),
+        // No other aggregate reaches phase seven, and a failure that did would
+        // still be one failure rather than none.
+        Outcome::Failed(_) => 1,
+        Outcome::Completed | Outcome::ShutdownRequested => 0,
+    }
 }
 
 /// Resolves every runnable the plan names, in plan order.
@@ -596,6 +681,12 @@ async fn give_up(
     policy: ShutdownPolicy,
     error: RunError,
 ) -> Outcome {
+    // Phase three's own notifications may still be walking their tables; they
+    // are waited for here for the same reason as on the normal ladder, before
+    // the components a listener might resolve are stopped.
+    let telemetry = Arc::clone(resolved.container.telemetry());
+    settle(&resolved.dispatcher, policy.stop, &telemetry).await;
+
     controller.begin_stopping();
     let watcher = controller.watcher();
     let cx = ShutdownContext::new(&resolved.container, &resolved.dispatcher, &watcher);
@@ -1042,6 +1133,59 @@ mod tests {
         }
     }
 
+    /// Emits an event of its own just before returning, which is the last
+    /// thing a well-behaved runnable does and the case a detached emission used
+    /// to lose.
+    struct Parting(RunnableDescriptor);
+
+    impl Runnable for Parting {
+        fn name() -> &'static str {
+            "parting"
+        }
+
+        fn descriptor(&self) -> RunnableDescriptor {
+            self.0
+        }
+
+        fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
+            Box::pin(async move {
+                cx.shutdown().stopping().await;
+                cx.dispatcher().emit(Parted);
+                Ok(())
+            })
+        }
+    }
+
+    /// What [`Parting`] emits.
+    #[derive(Debug)]
+    struct Parted;
+
+    impl Event for Parted {
+        const NAME: &'static str = "test.parted";
+    }
+
+    /// Records its tag, but not before the clock has moved.
+    ///
+    /// A listener that finishes in one poll is delivered by the scheduler's
+    /// goodwill as often as by design, which is what made the old behaviour
+    /// impossible to assert on either way. This one cannot finish unless
+    /// something waits for it.
+    struct Late(Trace);
+
+    impl Listener<Parted> for Late {
+        fn on_event<'a>(
+            &'a self,
+            _event: &'a mut Parted,
+            _cx: &'a ListenerContext<'a>,
+        ) -> BoxFuture<'a, Result<Flow, ListenerError>> {
+            Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                self.0.push("parted");
+                Ok(Flow::Continue)
+            })
+        }
+    }
+
     /// A probe, to prove the kernel declares the point that collects them.
     struct Sample;
 
@@ -1130,13 +1274,6 @@ mod tests {
             .into_iter()
             .find(|record| record.event == event)
             .and_then(|record| record.field(key).cloned())
-    }
-
-    /// Lets every detached emission reach its listeners.
-    async fn settle() {
-        for _ in 0..32 {
-            tokio::task::yield_now().await;
-        }
     }
 
     #[tokio::test]
@@ -1269,7 +1406,9 @@ mod tests {
         .await
         .expect("build");
 
-        settle().await;
+        // Phase three's own notifications are detached; this waits for them
+        // instead of yielding a plausible number of times and hoping.
+        kernel.resolved.dispatcher.settle().await;
 
         assert_eq!(
             seen.load(Ordering::Relaxed),
@@ -1456,6 +1595,9 @@ mod tests {
             other => panic!("unexpected outcome: {other:?}"),
         }
         assert!(!outcome.is_success());
+        // The other half of `stop_counts_unhandled`: nothing recovered from
+        // this one, and the last line of the run says so.
+        assert_eq!(field(&sink, STOPPED, "unhandled"), Some(FieldValue::Int(1)));
     }
 
     #[tokio::test(start_paused = true)]
@@ -1576,8 +1718,9 @@ mod tests {
         .await
         .expect("build");
 
+        // No yielding: `run` does not return until the emissions have settled,
+        // `stopped` being the last of them.
         let outcome = kernel.run().await;
-        settle().await;
 
         assert!(outcome.is_success());
         for tag in [
@@ -1593,6 +1736,79 @@ mod tests {
         }
         // The request is dispatched, so a listener's note is in it.
         assert_eq!(field(&sink, REQUESTED, "notes"), Some(FieldValue::Int(1)));
+    }
+
+    // The gap: `emit` spawned a task nothing joined, so an event emitted on
+    // the way out raced the end of the run and was lost as often as not. The
+    // ladder waits for it now, and this asserts on it with no yielding at all.
+    #[tokio::test(start_paused = true)]
+    async fn late_emit_reaches_listener() {
+        let sink = RecordingTelemetry::new();
+        let trace = Trace::default();
+        let inner = trace.clone();
+
+        let kernel = builder(&sink, move |registry| {
+            registry.listen(Late(inner.clone()), Priority::NORMAL);
+            registry.runnable(Provider::from_value(Arc::new(Parting(essential()))));
+            Ok(())
+        })
+        .build()
+        .await
+        .expect("build");
+
+        let handle = kernel.handle();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            handle.shutdown();
+        });
+
+        let outcome = kernel.run().await;
+
+        assert!(outcome.is_success());
+        assert!(trace.has("parted"));
+    }
+
+    // A run that recovered from an ancillary failure must not sign off with a
+    // count that reads like a failure: what nothing handled is its own field,
+    // and the total is named for what it holds.
+    #[tokio::test(start_paused = true)]
+    async fn stop_counts_unhandled() {
+        let sink = RecordingTelemetry::new();
+        let trace = Trace::default();
+        let inner = trace.clone();
+
+        let kernel = builder(&sink, move |registry| {
+            registry.runnable(Provider::from_value(Arc::new(Flaky(
+                ancillary().restart(RestartPolicy::on_failure(
+                    2,
+                    Backoff::Fixed(Duration::from_millis(10)),
+                )),
+                inner.clone(),
+            ))));
+            Ok(())
+        })
+        .build()
+        .await
+        .expect("build");
+
+        let handle = kernel.handle();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            handle.shutdown();
+        });
+
+        let outcome = kernel.run().await;
+
+        // The failure happened, was reported when it happened, and was
+        // recovered from: the exit is clean and says so.
+        assert!(outcome.is_success());
+        assert_eq!(trace.count("start"), 2);
+        assert_eq!(field(&sink, STOPPED, "unhandled"), Some(FieldValue::Int(0)));
+        assert_eq!(
+            field(&sink, STOPPED, "run_failures"),
+            Some(FieldValue::Int(1))
+        );
+        assert_eq!(field(&sink, STOPPED, "errors"), None);
     }
 
     #[test]

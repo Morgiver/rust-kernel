@@ -6,6 +6,10 @@
 //! values are obtained through [`FromConfig`], which is deliberately a local
 //! trait so that no serialization library leaks into contract crates.
 //!
+//! A `FromConfig` written by hand for a struct reads one leaf per field:
+//! [`ConfigNode::field`] does that read and re-roots whatever fails under the
+//! field's key, over [`ConfigError::under`].
+//!
 //! [`Secret`] wraps a value whose `Debug` and `Display` are redacted.
 
 use core::fmt;
@@ -95,6 +99,59 @@ impl ConfigNode {
             current = current.child(segment)?;
         }
         Some(current)
+    }
+
+    /// Reads `key` out of this node, typed.
+    ///
+    /// This is the call a [`FromConfig`] written by hand makes once per field:
+    /// the child at `key` is read as `T`, and any failure inside it is
+    /// re-rooted under `key`, so the path the operator reads is the path in
+    /// the file. `key` is resolved exactly as [`get`](ConfigNode::get)
+    /// resolves it, dots included.
+    ///
+    /// An absent `key` reads as an explicit null, so a type that accepts
+    /// absence — `Option<T>` — yields `None`; every other type reports
+    /// [`ConfigErrorKind::Missing`] naming `key`.
+    ///
+    /// ```
+    /// use kernel_core::config::{ConfigNode, ConfigTree, FromConfig};
+    /// use kernel_core::error::ConfigError;
+    ///
+    /// struct Limits {
+    ///     batch: u16,
+    ///     spare: Option<u16>,
+    /// }
+    ///
+    /// impl FromConfig for Limits {
+    ///     fn from_config(node: &ConfigNode) -> Result<Self, ConfigError> {
+    ///         Ok(Limits {
+    ///             batch: node.field("batch")?,
+    ///             spare: node.field("spare")?,
+    ///         })
+    ///     }
+    /// }
+    ///
+    /// let mut tree = ConfigTree::empty();
+    /// tree.insert("limits.batch", ConfigNode::from(2_i64)).unwrap();
+    /// let limits = Limits::from_config(tree.get("limits").unwrap()).unwrap();
+    /// assert_eq!(limits.batch, 2);
+    /// assert_eq!(limits.spare, None);
+    ///
+    /// tree.insert("limits.batch", ConfigNode::from(70_000_i64)).unwrap();
+    /// let failed = Limits::from_config(tree.get("limits").unwrap()).err().unwrap();
+    /// assert_eq!(failed.path(), "batch");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigErrorKind::Missing`] when `key` addresses nothing and `T` does
+    /// not accept absence; whatever `T` reports otherwise, re-rooted under
+    /// `key`.
+    pub fn field<T: FromConfig>(&self, key: &str) -> Result<T, ConfigError> {
+        match self.get(key) {
+            Some(node) => T::from_config(node).map_err(|error| error.under(key)),
+            None => T::from_config(&ABSENT).map_err(|_| ConfigError::missing(key)),
+        }
     }
 
     /// Resolves a single path segment.
@@ -364,25 +421,53 @@ fn mismatch(expected: &'static str, node: &ConfigNode) -> ConfigError {
     ConfigError::type_mismatch("", expected, node.kind_name())
 }
 
-/// Re-roots `error` under `segment`, so nested failures report where they are.
-///
-/// A [`ConfigErrorKind::Source`] error carries a foreign cause that cannot be
-/// rebuilt, so it is passed through unchanged.
-fn under(segment: &str, error: ConfigError) -> ConfigError {
-    let path = if error.path().is_empty() {
-        segment.to_string()
-    } else {
-        format!("{segment}.{}", error.path())
-    };
-    let rebuilt = match error.kind() {
-        ConfigErrorKind::Missing => Some(ConfigError::missing(path)),
-        ConfigErrorKind::TypeMismatch { expected, found } => {
-            Some(ConfigError::type_mismatch(path, expected, found))
+/// The node an absent key reads as: absence and an explicit null are the same
+/// thing to [`FromConfig`], which is what lets `Option<T>` accept both.
+static ABSENT: ConfigNode = ConfigNode::Scalar(Scalar::Null);
+
+impl ConfigError {
+    /// Re-roots this error under `prefix`, so a nested failure reports where
+    /// it is rather than where it was raised.
+    ///
+    /// `prefix` and the error's own path are joined with a dot, and either
+    /// being empty joins without one. This is the half of a hand-written
+    /// [`FromConfig`] that the error type alone cannot express: a
+    /// [`ConfigError`] can be built at a path and not moved to another.
+    ///
+    /// A [`ConfigErrorKind::Source`] carries a foreign cause that cannot be
+    /// taken back out and rebuilt around. Re-rooting one therefore wraps it:
+    /// the returned error is a `Source` at the prefixed path whose own cause
+    /// is the original error, so the path is right and
+    /// [`Error::source`](std::error::Error::source) still reaches the foreign
+    /// failure. Nothing is dropped, and no arm keeps a stale path.
+    ///
+    /// ```
+    /// use kernel_core::error::ConfigError;
+    ///
+    /// assert_eq!(ConfigError::missing("leaf").under("outer").path(), "outer.leaf");
+    /// assert_eq!(ConfigError::missing("leaf").under("").path(), "leaf");
+    /// ```
+    pub fn under(self, prefix: &str) -> ConfigError {
+        if prefix.is_empty() {
+            return self;
         }
-        ConfigErrorKind::Invalid(detail) => Some(ConfigError::invalid(path, detail.clone())),
-        ConfigErrorKind::Source(_) => None,
-    };
-    rebuilt.unwrap_or(error)
+        let path = if self.path().is_empty() {
+            prefix.to_string()
+        } else {
+            format!("{prefix}.{}", self.path())
+        };
+        let rebuilt = match self.kind() {
+            ConfigErrorKind::Missing => Some(ConfigError::missing(path.clone())),
+            ConfigErrorKind::TypeMismatch { expected, found } => {
+                Some(ConfigError::type_mismatch(path.clone(), expected, found))
+            }
+            ConfigErrorKind::Invalid(detail) => {
+                Some(ConfigError::invalid(path.clone(), detail.clone()))
+            }
+            ConfigErrorKind::Source(_) => None,
+        };
+        rebuilt.unwrap_or_else(|| ConfigError::source_error(path, Box::new(self)))
+    }
 }
 
 /// A provider of configuration, in whatever format it likes.
@@ -500,7 +585,8 @@ impl<T: FromConfig> FromConfig for Vec<T> {
             ConfigNode::Seq(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for (index, item) in items.iter().enumerate() {
-                    out.push(T::from_config(item).map_err(|e| under(&index.to_string(), e))?);
+                    let parsed = T::from_config(item).map_err(|e| e.under(&index.to_string()))?;
+                    out.push(parsed);
                 }
                 Ok(out)
             }
@@ -515,7 +601,7 @@ impl<T: FromConfig> FromConfig for BTreeMap<String, T> {
             ConfigNode::Map(entries) => {
                 let mut out = BTreeMap::new();
                 for (key, value) in entries {
-                    let parsed = T::from_config(value).map_err(|e| under(key, e))?;
+                    let parsed = T::from_config(value).map_err(|e| e.under(key))?;
                     out.insert(key.clone(), parsed);
                 }
                 Ok(out)
@@ -1003,6 +1089,142 @@ mod tests {
         )]));
         let err = BTreeMap::<String, Vec<i64>>::from_config(&nested).unwrap_err();
         assert_eq!(err.path(), "outer.0");
+    }
+
+    #[test]
+    fn reads_typed_field() {
+        let node = tree(&[
+            ("outer.count", ConfigNode::from(2_i64)),
+            ("outer.name", ConfigNode::from("x")),
+        ])
+        .into_root();
+        let outer = node.get("outer").expect("outer");
+
+        assert_eq!(outer.field::<u8>("count").unwrap(), 2);
+        assert_eq!(outer.field::<String>("name").unwrap(), "x");
+        assert_eq!(node.field::<u8>("outer.count").unwrap(), 2);
+    }
+
+    #[test]
+    fn field_roots_errors() {
+        let node = tree(&[("count", ConfigNode::from(70_000_i64))]).into_root();
+
+        let err = node.field::<u16>("count").unwrap_err();
+        assert_eq!(err.path(), "count");
+        assert!(matches!(err.kind(), ConfigErrorKind::Invalid(_)));
+
+        let err = node.field::<String>("count").unwrap_err();
+        assert_eq!(err.path(), "count");
+
+        let nested = ConfigTree::from_node(ConfigNode::Map(BTreeMap::from([(
+            "items".to_string(),
+            ConfigNode::Seq(vec![ConfigNode::from(1_i64), ConfigNode::from("x")]),
+        )])))
+        .into_root();
+        let err = nested.field::<Vec<i64>>("items").unwrap_err();
+        assert_eq!(err.path(), "items.1");
+    }
+
+    #[test]
+    fn field_absence() {
+        let node = ConfigNode::map();
+
+        let err = node.field::<u8>("absent").unwrap_err();
+        assert_eq!(err.path(), "absent");
+        assert!(matches!(err.kind(), ConfigErrorKind::Missing));
+
+        assert_eq!(node.field::<Option<u8>>("absent").unwrap(), None);
+        assert_eq!(
+            tree(&[("here", ConfigNode::null())])
+                .into_root()
+                .field::<Option<u8>>("here")
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn under_prefixes_path() {
+        assert_eq!(
+            ConfigError::missing("leaf").under("outer").path(),
+            "outer.leaf"
+        );
+        assert_eq!(ConfigError::missing("").under("outer").path(), "outer");
+        assert_eq!(ConfigError::missing("leaf").under("").path(), "leaf");
+
+        let err = ConfigError::type_mismatch("leaf", "int", "string").under("outer");
+        assert_eq!(err.path(), "outer.leaf");
+        assert!(matches!(
+            err.kind(),
+            ConfigErrorKind::TypeMismatch {
+                expected: "int",
+                found: "string"
+            }
+        ));
+
+        let err = ConfigError::invalid("leaf", "detail").under("outer");
+        assert_eq!(err.path(), "outer.leaf");
+        assert!(matches!(err.kind(), ConfigErrorKind::Invalid(d) if d == "detail"));
+    }
+
+    #[test]
+    fn under_keeps_foreign_cause() {
+        use std::error::Error;
+
+        #[derive(Debug)]
+        struct Foreign;
+
+        impl fmt::Display for Foreign {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("unreadable")
+            }
+        }
+
+        impl Error for Foreign {}
+
+        let err = ConfigError::source_error("leaf", Box::new(Foreign)).under("outer");
+        assert_eq!(err.path(), "outer.leaf");
+        assert!(matches!(err.kind(), ConfigErrorKind::Source(_)));
+        assert!(err.to_string().contains("unreadable"));
+
+        let mut cause: Option<&(dyn Error + 'static)> = err.source();
+        let mut foreign = None;
+        while let Some(current) = cause {
+            if current.is::<Foreign>() {
+                foreign = Some(current);
+            }
+            cause = current.source();
+        }
+        assert!(foreign.is_some(), "foreign cause lost");
+    }
+
+    #[test]
+    fn field_reroots_source() {
+        use std::error::Error;
+
+        #[derive(Debug)]
+        struct Foreign;
+
+        impl fmt::Display for Foreign {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("unreadable")
+            }
+        }
+
+        impl Error for Foreign {}
+
+        #[derive(Debug)]
+        struct Refusing;
+
+        impl FromConfig for Refusing {
+            fn from_config(_: &ConfigNode) -> Result<Self, ConfigError> {
+                Err(ConfigError::source_error("", Box::new(Foreign)))
+            }
+        }
+
+        let node = tree(&[("leaf", ConfigNode::from(1_i64))]).into_root();
+        let err = node.field::<Refusing>("leaf").unwrap_err();
+        assert_eq!(err.path(), "leaf");
     }
 
     #[test]

@@ -24,7 +24,7 @@
 //! # Aggregation, not first failure
 //!
 //! Every check collects. A start-up that reveals one error at a time, six times
-//! in a row, is a tooling defect, so all nine checks run over the whole
+//! in a row, is a tooling defect, so all ten checks run over the whole
 //! registry and the violations come back together in one
 //! [`Vec<ResolveError>`](ResolveError). The order is deterministic: checks run
 //! in a fixed sequence and each one walks its input in registration order.
@@ -40,6 +40,11 @@
 //! resolutions share a single declaration, and over-approximating the edge set
 //! would reject graphs that cannot deadlock while giving the author no way to
 //! express the distinction.
+//!
+//! A listener declares what it resolves the same way, and it is checked the
+//! same way — but it induces no edge. A listener resolves while an event is
+//! dispatched, long after every binding has been built, so it can be no part of
+//! a build-time cycle and orders nothing against anything.
 
 use core::any::TypeId;
 use core::fmt;
@@ -47,7 +52,9 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use kernel_core::{BundleManifest, ComponentId, ContractId, ContractRef, ResolveError, RunnableId};
+use kernel_core::{
+    BundleManifest, ComponentId, ContractId, ContractRef, Lifetime, ResolveError, RunnableId,
+};
 
 use crate::component::Component;
 use crate::container::{BindingEntry, Container};
@@ -126,17 +133,25 @@ pub struct Resolved {
 /// 4. [`Cycle`] — a cycle in the binding graph, reported as the full closed
 ///    walk.
 /// 5. [`UndeclaredExtensionPoint`] — a contribution to a point nobody declared.
-/// 6. [`ManifestMismatch`] — a manifest requirement that none of the bundle's
-///    own providers declares, which is what makes a lying manifest detectable
-///    rather than decorative.
+/// 6. [`ManifestMismatch`] — a manifest requirement that neither the bundle's
+///    own providers nor its own listeners declare, which is what makes a lying
+///    manifest detectable rather than decorative.
 /// 7. [`UnknownBundleOrder`] — an ordering constraint naming a bundle that is
 ///    not registered.
 /// 8. [`BundleCycle`] — a cycle among the bundle ordering constraints, which
 ///    no registration order can satisfy.
 /// 9. [`DuplicateBundle`] — one name registered by two bundles, which makes
 ///    every ordering constraint and every attribution that names it ambiguous.
+/// 10. [`LifetimeConflict`] — a requirer that is not itself `Scoped` and
+///     requires a `Scoped` binding, which no scope can ever satisfy. Every
+///     non-`Scoped` binding and every listener is a requirer here.
+///
+/// A requirement is declared by a provider, by a listener or by a manifest, and
+/// checks 1, 6 and 10 read the listeners too: a listener that resolves during
+/// dispatch is checked here or nowhere.
 ///
 /// [`BundleCycle`]: ResolveError::BundleCycle
+/// [`LifetimeConflict`]: ResolveError::LifetimeConflict
 /// [`DuplicateBundle`]: ResolveError::DuplicateBundle
 /// [`MissingContract`]: ResolveError::MissingContract
 /// [`DuplicateDefault`]: ResolveError::DuplicateDefault
@@ -177,15 +192,16 @@ pub fn resolve(
     let edges = binding_edges(&parts.bindings, &index);
 
     let mut errors = Vec::new();
-    missing_contracts(&parts.bindings, manifests, &index, &mut errors);
+    missing_contracts(&parts, manifests, &index, &mut errors);
     duplicate_defaults(&parts.bindings, &mut errors);
     duplicate_names(&parts.bindings, &mut errors);
     binding_cycles(&parts.bindings, &edges, &mut errors);
     undeclared_points(&parts, &mut errors);
-    manifest_mismatches(&parts.bindings, manifests, &mut errors);
+    manifest_mismatches(&parts, manifests, &mut errors);
     unknown_bundle_order(manifests, &mut errors);
     bundle_cycles(manifests, &mut errors);
     duplicate_bundles(manifests, &mut errors);
+    lifetime_conflicts(&parts, &index, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -204,14 +220,19 @@ pub fn resolve(
         telemetry,
     } = parts;
 
+    let extensions = Arc::new(ExtensionPoints::from_parts(declared_points, contributions));
     let dispatcher = Arc::new(EventDispatcher::new(listeners, Arc::clone(&telemetry)));
-    let container = Container::new(bindings, config, telemetry, KernelHandle::new());
+    // The container carries the frozen table too, so anything that holds a
+    // container past boot -- a provider, a listener, a scope -- reads the same
+    // contributions a `BootContext` reads.
+    let container = Container::new(bindings, config, telemetry, KernelHandle::new())
+        .with_extensions(Arc::clone(&extensions));
     dispatcher.attach(container.clone());
 
     Ok(Resolved {
         container,
         dispatcher,
-        extensions: Arc::new(ExtensionPoints::from_parts(declared_points, contributions)),
+        extensions,
         plan,
         components,
         runnables,
@@ -274,15 +295,25 @@ fn holds_default(entry: &BindingEntry) -> bool {
 /// A provider is named by the contract it binds and a manifest by its bundle,
 /// so the same missing contract asked for by three units reports three times —
 /// three units have to change, not one.
+///
+/// A listener is named by the event it handles, which is the only identity it
+/// declares: it binds no contract and it is not a bundle. Two listeners of one
+/// event, in one bundle, missing one contract are therefore one line — they are
+/// also one thing to fix, since the contract the event handling needs is
+/// missing once.
+///
+/// Listeners are read here because they are read nowhere else. What a listener
+/// resolves happens during dispatch, so a requirement it does not declare is a
+/// failure on every event and never a failure of the graph.
 fn missing_contracts(
-    bindings: &[BindingEntry],
+    parts: &RegistryParts,
     manifests: &[BundleManifest],
     index: &BindingIndex,
     errors: &mut Vec<ResolveError>,
 ) {
     let mut seen: HashSet<(&'static str, ContractId)> = HashSet::new();
 
-    for entry in bindings {
+    for entry in &parts.bindings {
         for contract in &entry.requires {
             missing_one(
                 entry.contract.type_name(),
@@ -291,6 +322,11 @@ fn missing_contracts(
                 &mut seen,
                 errors,
             );
+        }
+    }
+    for entry in &parts.listeners {
+        for contract in &entry.requires {
+            missing_one(entry.event_name, *contract, index, &mut seen, errors);
         }
     }
     for manifest in manifests {
@@ -471,15 +507,20 @@ fn undeclared_points(parts: &RegistryParts, errors: &mut Vec<ResolveError>) {
 // 6. Manifest mismatches
 // --------------------------------------------------------------------------
 
-/// Every manifest requirement none of the bundle's own providers declares.
+/// Every manifest requirement nothing the bundle registered declares.
 ///
-/// A manifest is a claim about what the bundle needs; the providers are what
-/// the bundle actually asks the container for. When the first is not a subset
-/// of the union of the second, the manifest describes a bundle that was not
-/// registered — the check is what keeps a manifest a fact rather than a
-/// comment.
+/// A manifest is a claim about what the bundle needs; its providers and its
+/// listeners are what the bundle actually asks the container for. When the
+/// first is not a subset of the union of the second, the manifest describes a
+/// bundle that was not registered — the check is what keeps a manifest a fact
+/// rather than a comment.
+///
+/// The listeners are read for the same reason check 1 reads them: a contract a
+/// listener resolves during dispatch is a contract the bundle needs, declared
+/// where it is resolved. A bundle whose only consumer of a contract is a
+/// listener would otherwise be unable to name it in its manifest at all.
 fn manifest_mismatches(
-    bindings: &[BindingEntry],
+    parts: &RegistryParts,
     manifests: &[BundleManifest],
     errors: &mut Vec<ResolveError>,
 ) {
@@ -489,7 +530,19 @@ fn manifest_mismatches(
         }
 
         let mut asked: HashSet<ContractId> = HashSet::new();
-        for entry in bindings
+        for entry in parts
+            .bindings
+            .iter()
+            .filter(|entry| entry.bundle == manifest.name)
+        {
+            asked.extend(entry.requires.iter().map(ContractRef::id));
+        }
+        // A listener's declaration counts too. It is a requirement of the
+        // bundle exactly as a provider's is — phase three checks both the same
+        // way — so a bundle whose only consumer of a contract is a listener can
+        // say so in its manifest without being accused of lying about it.
+        for entry in parts
+            .listeners
             .iter()
             .filter(|entry| entry.bundle == manifest.name)
         {
@@ -597,6 +650,84 @@ fn duplicate_bundles(manifests: &[BundleManifest], errors: &mut Vec<ResolveError
         if !seen.insert(manifest.name) && reported.insert(manifest.name) {
             errors.push(ResolveError::DuplicateBundle {
                 name: manifest.name,
+            });
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
+// 10. Lifetime compatibility
+// --------------------------------------------------------------------------
+
+/// Every shared binding that requires a scoped one.
+///
+/// A `Shared` value is built once, in the root container, where no scope
+/// exists; a `Scoped` value can only be built inside one. So the requirement is
+/// not merely risky, it is unsatisfiable: every resolution of that shared
+/// binding fails, on the first unit of work that reaches it. Both facts are
+/// declared — the lifetime sits on each binding and the requirement between
+/// them is what the graph is made of — so the failure belongs here and not in
+/// phase four, where it arrives attributed to the boot rather than to the
+/// binding that stated it.
+///
+/// A requirement nothing satisfies contributes nothing: it is already a missing
+/// contract, and reporting it twice would turn one defect into two. `Factory`
+/// and `Scoped` requirers are left alone — a factory value is built wherever it
+/// is asked for, and a scoped one is already inside a scope.
+fn lifetime_conflicts(parts: &RegistryParts, index: &BindingIndex, errors: &mut Vec<ResolveError>) {
+    for entry in &parts.bindings {
+        // A scoped binding is the one requirer a scoped requirement is
+        // satisfiable for: it is itself built inside the scope. Everything else
+        // — `Shared`, `Factory`, and a listener — is not.
+        if entry.lifetime == Lifetime::Scoped {
+            continue;
+        }
+        scoped_needs(
+            entry.contract.type_name(),
+            entry.bundle,
+            &entry.requires,
+            &parts.bindings,
+            index,
+            errors,
+        );
+    }
+    // A listener resolves during dispatch, which is outside every scope. It has
+    // no lifetime of its own to exempt it, and no binding to name it, so it is
+    // named by the event it handles.
+    for entry in &parts.listeners {
+        scoped_needs(
+            entry.event_name,
+            entry.bundle,
+            &entry.requires,
+            &parts.bindings,
+            index,
+            errors,
+        );
+    }
+}
+
+/// Reports every scoped requirement one requirer states, once each.
+fn scoped_needs(
+    required_by: &'static str,
+    bundle: &'static str,
+    requires: &[ContractRef],
+    bindings: &[BindingEntry],
+    index: &BindingIndex,
+    errors: &mut Vec<ResolveError>,
+) {
+    let mut seen: HashSet<ContractId> = HashSet::new();
+    for contract in requires {
+        let Some(target) = index.target(contract) else {
+            continue;
+        };
+        if bindings[target].lifetime != Lifetime::Scoped {
+            continue;
+        }
+        if seen.insert(contract.id()) {
+            errors.push(ResolveError::LifetimeConflict {
+                required_by,
+                requires: *contract,
+                bundle,
             });
         }
     }
@@ -840,12 +971,14 @@ mod tests {
     trait Alpha: Send + Sync + 'static {}
     trait Beta: Send + Sync + 'static {}
     trait Gamma: Send + Sync + 'static {}
+    trait Delta: Send + Sync + 'static {}
 
     struct Plain;
 
     impl Alpha for Plain {}
     impl Beta for Plain {}
     impl Gamma for Plain {}
+    impl Delta for Plain {}
 
     struct Item;
 
@@ -892,6 +1025,10 @@ mod tests {
         Provider::from_value(Arc::new(Plain) as Arc<dyn Gamma>)
     }
 
+    fn delta() -> Provider<dyn Delta> {
+        Provider::from_value(Arc::new(Plain) as Arc<dyn Delta>)
+    }
+
     fn rendered(errors: &[ResolveError]) -> Vec<String> {
         errors.iter().map(ToString::to_string).collect()
     }
@@ -909,6 +1046,7 @@ mod tests {
                 ResolveError::UnknownBundleOrder { .. } => "order",
                 ResolveError::BundleCycle { .. } => "bundle-cycle",
                 ResolveError::DuplicateBundle { .. } => "duplicate-bundle",
+                ResolveError::LifetimeConflict { .. } => "lifetime",
             })
             .collect()
     }
@@ -1012,8 +1150,11 @@ mod tests {
 
     // One instance of every check, planted at once. The whole point of phase
     // three is that a start-up reveals all of them in one run.
+    //
+    // `kinds` matches exhaustively, so a check added without a line here does
+    // not compile.
     #[test]
-    fn aggregates_all_nine() {
+    fn aggregates_all_ten() {
         static ONE_REQUIRES: [ContractRef; 1] = [ContractRef::of::<dyn Beta>()];
         static AFTER_TWO: [&str; 1] = ["two"];
         static AFTER_ONE: [&str; 2] = ["one", "absent"];
@@ -1039,13 +1180,16 @@ mod tests {
         registry.provide_named("primary", gamma());
         // 5. a contribution to a point nobody declared.
         registry.contribute(Item);
+        // 10. a shared binding that requires a scoped one.
+        registry.provide(delta().lifetime(Lifetime::Scoped));
+        registry.provide_named("keeper", beta().requires([ContractRef::of::<dyn Delta>()]));
         // 6. `one` declares a requirement none of its providers states.
         // 7. `two` orders itself after a bundle that is not registered.
         // 8. `one` and `two` order each other.
         // 9. a third manifest registers the name `one` a second time.
 
         let errors =
-            resolve(registry, &[ONE, TWO, ONE_AGAIN]).expect_err("nine violations were planted");
+            resolve(registry, &[ONE, TWO, ONE_AGAIN]).expect_err("ten violations were planted");
 
         assert_eq!(
             kinds(&errors),
@@ -1059,6 +1203,7 @@ mod tests {
                 "order",
                 "bundle-cycle",
                 "duplicate-bundle",
+                "lifetime",
             ],
             "{:?}",
             rendered(&errors)
@@ -1325,6 +1470,22 @@ mod tests {
         assert_eq!(resolved.extensions.count::<Item>(), 1);
     }
 
+    #[test]
+    fn container_carries_points() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.declare_extension_point::<Item>();
+        registry.enter_bundle("two");
+        registry.contribute(Item);
+
+        let resolved = resolve(registry, &[]).expect("the point was declared");
+
+        // Not only `Resolved`: a container handed to a provider or a listener
+        // reads the same table.
+        assert_eq!(resolved.container.extensions().count::<Item>(), 1);
+        assert_eq!(resolved.container.scope().extensions().count::<Item>(), 1);
+    }
+
     // ------------------------------------------------------------------
     // 6. Manifest mismatch
     // ------------------------------------------------------------------
@@ -1359,6 +1520,24 @@ mod tests {
         registry.enter_bundle("one");
         registry.provide(gamma());
         registry.provide(alpha().requires([ContractRef::of::<dyn Gamma>()]));
+
+        assert!(resolve(registry, &[MANIFEST]).is_ok());
+    }
+
+    // A listener's declaration is the bundle's requirement too: a manifest may
+    // name a contract no provider of the bundle asks for, as long as one of its
+    // listeners does.
+    #[test]
+    fn listener_honours_manifest() {
+        static REQUIRES: [ContractRef; 1] = [ContractRef::of::<dyn Gamma>()];
+        static MANIFEST: BundleManifest = BundleManifest::new("one", "0.1.0").requires(&REQUIRES);
+
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(gamma());
+        registry
+            .listen(Watcher, Priority(0))
+            .requires([ContractRef::of::<dyn Gamma>()]);
 
         assert!(resolve(registry, &[MANIFEST]).is_ok());
     }
@@ -1471,6 +1650,217 @@ mod tests {
         let errors = resolve(registry(), &[ONE, TWO, ONE]).expect_err("`one` is registered twice");
 
         assert_eq!(kinds(&errors), ["duplicate-bundle"]);
+    }
+
+    // ------------------------------------------------------------------
+    // 10. Lifetime compatibility
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn shared_refuses_scoped() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha().lifetime(Lifetime::Scoped));
+        registry.provide(beta().requires([ContractRef::of::<dyn Alpha>()]));
+
+        let errors = resolve(registry, &[]).expect_err("a shared binding requires a scoped one");
+
+        match &errors[..] {
+            [
+                ResolveError::LifetimeConflict {
+                    required_by,
+                    requires,
+                    bundle,
+                },
+            ] => {
+                assert!(required_by.ends_with("Beta"), "{required_by}");
+                assert!(requires.type_name().ends_with("Alpha"), "{requires:?}");
+                assert_eq!(*bundle, "one");
+            }
+            other => panic!("expected one lifetime conflict, got {other:?}"),
+        }
+    }
+
+    // A component's binding is forced to `Shared`, so this is the case that
+    // used to reach phase four and be blamed on the boot.
+    #[test]
+    fn component_refuses_scoped() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha().lifetime(Lifetime::Scoped));
+        registry.component(
+            Provider::<First>::from_fn(|_container| panic!("no build during resolution"))
+                .requires([ContractRef::of::<dyn Alpha>()]),
+        );
+
+        let errors = resolve(registry, &[]).expect_err("a component requires a scoped binding");
+
+        assert_eq!(kinds(&errors), ["lifetime"], "{:?}", rendered(&errors));
+    }
+
+    // The one requirer a scoped requirement is satisfiable for: a scoped
+    // binding is built inside the scope that would build what it needs.
+    #[test]
+    fn scoped_may_require_scoped() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha().lifetime(Lifetime::Scoped));
+        registry.provide(
+            beta()
+                .lifetime(Lifetime::Scoped)
+                .requires([ContractRef::of::<dyn Alpha>()]),
+        );
+
+        assert!(resolve(registry, &[]).is_ok());
+    }
+
+    // A factory is built on every resolution, and a resolution outside a scope
+    // is one of them. It is no more able to reach a scoped binding than a
+    // shared one is, so the check reads it too.
+    #[test]
+    fn factory_refuses_scoped() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha().lifetime(Lifetime::Scoped));
+        registry.provide(
+            gamma()
+                .lifetime(Lifetime::Factory)
+                .requires([ContractRef::of::<dyn Alpha>()]),
+        );
+
+        let errors = resolve(registry, &[]).expect_err("a factory requires a scoped binding");
+
+        assert_eq!(kinds(&errors), ["lifetime"], "{:?}", rendered(&errors));
+    }
+
+    // A listener binds nothing, so it has no lifetime to exempt it and no
+    // contract to name it: it resolves during dispatch, outside every scope,
+    // and the diagnostic names the event it handles.
+    #[test]
+    fn listener_refuses_scoped() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha().lifetime(Lifetime::Scoped));
+        registry
+            .listen(Watcher, Priority(0))
+            .requires([ContractRef::of::<dyn Alpha>()]);
+
+        let errors = resolve(registry, &[]).expect_err("a listener requires a scoped binding");
+
+        match &errors[..] {
+            [
+                ResolveError::LifetimeConflict {
+                    required_by,
+                    requires,
+                    bundle,
+                },
+            ] => {
+                assert_eq!(*required_by, "signal");
+                assert!(requires.type_name().ends_with("Alpha"), "{requires:?}");
+                assert_eq!(*bundle, "one");
+            }
+            other => panic!("expected one lifetime conflict, got {other:?}"),
+        }
+    }
+
+    // A requirement is checked against the binding it actually reaches. The
+    // default binding here is shared, so requiring it is sound even though a
+    // scoped sibling exists.
+    #[test]
+    fn default_lifetime_wins() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha());
+        registry.provide_named("keeper", alpha().lifetime(Lifetime::Scoped));
+        registry.provide(beta().requires([ContractRef::of::<dyn Alpha>()]));
+
+        assert!(resolve(registry, &[]).is_ok());
+    }
+
+    #[test]
+    fn conflict_follows_name() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha());
+        registry.provide_named("keeper", alpha().lifetime(Lifetime::Scoped));
+        registry.provide(beta().requires([ContractRef::named::<dyn Alpha>("keeper")]));
+
+        let errors = resolve(registry, &[]).expect_err("the named binding is scoped");
+
+        assert_eq!(kinds(&errors), ["lifetime"], "{:?}", rendered(&errors));
+    }
+
+    // A requirement nothing satisfies is one defect; reporting it twice would
+    // make it two.
+    #[test]
+    fn missing_is_not_conflict() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(beta().requires([ContractRef::of::<dyn Alpha>()]));
+
+        let errors = resolve(registry, &[]).expect_err("nothing provides Alpha");
+
+        assert_eq!(kinds(&errors), ["missing"]);
+    }
+
+    // ------------------------------------------------------------------
+    // What a listener declares
+    // ------------------------------------------------------------------
+
+    // The gap this check closes: a listener resolves during dispatch, so
+    // without a declaration the graph passes, boots, and then fails that
+    // listener on every event.
+    #[test]
+    fn listener_needs_checked() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha());
+        registry
+            .listen(Watcher, Priority(0))
+            .requires([ContractRef::of::<dyn Gamma>()]);
+
+        let errors = resolve(registry, &[]).expect_err("nothing provides Gamma");
+
+        match &errors[..] {
+            [
+                ResolveError::MissingContract {
+                    required_by,
+                    contract,
+                },
+            ] => {
+                // A listener is named by the event it handles.
+                assert_eq!(*required_by, "signal");
+                assert!(contract.type_name().ends_with("Gamma"), "{contract:?}");
+            }
+            other => panic!("expected one missing contract, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn listener_needs_satisfied() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha());
+        registry
+            .listen(Watcher, Priority(0))
+            .requires([ContractRef::of::<dyn Alpha>()]);
+
+        assert!(resolve(registry, &[]).is_ok());
+    }
+
+    // A listener runs long after every binding is built, so what it resolves
+    // cannot close a build-time cycle and orders nothing.
+    #[test]
+    fn listener_adds_no_edge() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha().requires([ContractRef::of::<dyn Beta>()]));
+        registry.provide(beta());
+        registry
+            .listen(Watcher, Priority(0))
+            .requires([ContractRef::of::<dyn Alpha>()]);
+
+        assert!(resolve(registry, &[]).is_ok());
     }
 
     // ------------------------------------------------------------------
