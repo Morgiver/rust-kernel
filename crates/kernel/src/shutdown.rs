@@ -20,13 +20,16 @@
 //! a regression — and a waiter that arrives after its stage has passed resolves
 //! immediately rather than waiting for a transition that will never come again.
 //!
-//! [`KernelHandle`] is the other direction: it does not observe the ladder, it
+//! [`KernelHandle`] is the other direction: it does not drive the ladder, it
 //! *asks* for it. It is clonable and resolvable from the container, so any unit
-//! can request a stop without holding the lifecycle driver.
+//! can request a stop without holding the lifecycle driver. It reads the ladder
+//! too, once a driver has [`attach`](ShutdownController::attach)ed one: a unit
+//! that reaches no further than the handle still tells `Draining` from
+//! `Stopping`, which one boolean cannot say.
 
 use core::fmt;
 use core::time::Duration;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
 use kernel_core::{ShutdownPolicy, Stage};
@@ -40,6 +43,20 @@ fn guard<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// When the current stage began and when it must end.
+///
+/// One cell rather than two, so that no reader can ever pair the start of one
+/// stage with the deadline of the next: a unit that owns a budget of its own
+/// counts it from the start, and a start half a stage out of date is a budget
+/// out of date.
+#[derive(Clone, Copy)]
+struct Bounds {
+    /// Instant the current stage was entered; `None` while nothing has moved.
+    entered: Option<Instant>,
+    /// Instant the current stage must end by; `None` when the stage is untimed.
+    deadline: Option<Instant>,
+}
+
 /// The shared state behind one controller and every watcher cloned from it.
 struct Ladder {
     /// Current stage. The watch channel is what makes a late waiter cheap: the
@@ -47,8 +64,8 @@ struct Ladder {
     stage: watch::Sender<Stage>,
     /// Budgets the stages are given.
     policy: ShutdownPolicy,
-    /// Instant the current stage must end by; `None` when the stage is untimed.
-    deadline: Mutex<Option<Instant>>,
+    /// When the current stage began, and when it must end.
+    bounds: Mutex<Bounds>,
 }
 
 impl Ladder {
@@ -56,7 +73,10 @@ impl Ladder {
         Self {
             stage: watch::Sender::new(Stage::Running),
             policy,
-            deadline: Mutex::new(None),
+            bounds: Mutex::new(Bounds {
+                entered: None,
+                deadline: None,
+            }),
         }
     }
 
@@ -65,7 +85,11 @@ impl Ladder {
     }
 
     fn deadline(&self) -> Option<Instant> {
-        *guard(&self.deadline)
+        guard(&self.bounds).deadline
+    }
+
+    fn entered(&self) -> Option<Instant> {
+        guard(&self.bounds).entered
     }
 
     /// Move to `target` unless the ladder is already there or beyond.
@@ -80,9 +104,13 @@ impl Ladder {
                 return false;
             }
             *current = target;
-            *guard(&self.deadline) = policy
-                .budget(target)
-                .map(|budget| (tokio::time::Instant::now() + budget).into_std());
+            let now = tokio::time::Instant::now();
+            *guard(&self.bounds) = Bounds {
+                entered: Some(now.into_std()),
+                deadline: policy
+                    .budget(target)
+                    .map(|budget| (now + budget).into_std()),
+            };
             true
         });
     }
@@ -155,9 +183,43 @@ impl Shutdown {
     /// `None` while [`Stage::Running`], and `None` again once
     /// [`Stage::Stopped`]: neither stage is timed. Between the two it is the
     /// start of the stage plus that stage's budget.
+    ///
+    /// # `None` is not "unbounded"
+    ///
+    /// An untimed stage grants no grace, it does not grant endless grace —
+    /// the same rule the supervisor applies when it ends a stage nobody
+    /// budgeted. A reader that writes `if let Some(deadline) = ..` and leaves
+    /// the `None` arm empty has written a cut that silently never happens,
+    /// which is the one shape this accessor invites and cannot prevent.
+    /// [`sleep_until_deadline`](Self::sleep_until_deadline) is this value with
+    /// the `None` arm already decided, and with the conversion to the
+    /// runtime's own clock already done.
     #[must_use]
     pub fn deadline(&self) -> Option<Instant> {
         self.ladder.deadline()
+    }
+
+    /// The instant the current stage began.
+    ///
+    /// `None` until something moves. What a unit holding a budget of its own
+    /// counts from; kept crate-private because a budget counted from here by
+    /// hand is the arithmetic
+    /// [`RunContext::deadline`](crate::runnable::RunContext::deadline) exists
+    /// to do once.
+    pub(crate) fn entered(&self) -> Option<Instant> {
+        self.ladder.entered()
+    }
+
+    /// Makes `handle` report this ladder's stage, unless a ladder is already
+    /// bound to it.
+    ///
+    /// Crate-private, and deliberately not on the reading end's public
+    /// surface: the public verb is [`ShutdownController::attach`], held by
+    /// whoever drives the lifecycle. A watcher can bind a handle it was handed
+    /// beside — which is what a run context does — but nothing outside the
+    /// kernel gets to decide which ladder a handle speaks for.
+    pub(crate) fn attach(&self, handle: &KernelHandle) {
+        handle.attach(&self.ladder);
     }
 
     /// Resolves when draining starts, or immediately if it already has.
@@ -212,6 +274,68 @@ impl Shutdown {
         self.bounded(Stage::Stopping, period).await
     }
 
+    /// Waits until the current stage's deadline, and says whether there was
+    /// one.
+    ///
+    /// The wait a unit that must cut something off needs, written once. It
+    /// differs from `sleep_until(shutdown.deadline()?)` in three ways, and
+    /// every one of them is a defect somebody hand-rolled:
+    ///
+    /// 1. **An untimed stage answers immediately.** A stage with no deadline
+    ///    grants no grace rather than endless grace, so the wait returns
+    ///    [`Budget::Untimed`] at once and the caller cuts. The hand-rolled
+    ///    form skips the wait *and* skips the cut, and the work it was meant
+    ///    to bound runs on unbounded.
+    /// 2. **It follows the ladder.** A deadline read once is the deadline of
+    ///    the stage that was current when it was read; when the ladder climbs
+    ///    a rung mid-wait, this wait picks the new stage's deadline up rather
+    ///    than firing at the old one.
+    /// 3. **It converts.** [`deadline`](Self::deadline) is a
+    ///    [`std::time::Instant`], and sleeping to it needs the runtime's own
+    ///    clock — a conversion that is invisible under a paused clock until a
+    ///    test hangs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use kernel::{Budget, ShutdownController};
+    /// # use kernel::core::ShutdownPolicy;
+    /// # async fn probe() {
+    /// let (controller, shutdown) = ShutdownController::new(ShutdownPolicy::default());
+    /// controller.begin_stopping();
+    ///
+    /// if shutdown.sleep_until_deadline().await == Budget::Spent {
+    ///     // whatever is still in flight is over budget: cut it
+    /// }
+    /// # }
+    /// ```
+    pub async fn sleep_until_deadline(&self) -> Budget {
+        let mut receiver = self.ladder.stage.subscribe();
+        loop {
+            let Some(deadline) = self.deadline() else {
+                return Budget::Untimed;
+            };
+            let until = tokio::time::Instant::from_std(deadline);
+
+            // Biased so that a deadline already past wins over a transition
+            // that is also ready: the answer must not depend on which of two
+            // ready branches the runtime happens to poll first.
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(until) => return Budget::Spent,
+                changed = receiver.changed() => {
+                    if changed.is_err() {
+                        // The ladder can no longer move, so the deadline in
+                        // hand is final. Waiting it out beats looping on a
+                        // channel that will report the same failure forever.
+                        tokio::time::sleep_until(until).await;
+                        return Budget::Spent;
+                    }
+                }
+            }
+        }
+    }
+
     /// The wait both public forms are made of.
     ///
     /// Biased so that a ladder already at or past `target` wins over a period
@@ -257,6 +381,32 @@ impl Tick {
             Self::Elapsed => None,
             Self::Interrupted(stage) => Some(stage),
         }
+    }
+}
+
+/// Whether a stage had a budget, and whether it is gone.
+///
+/// Returned by [`Shutdown::sleep_until_deadline`]. Two variants and not a
+/// `bool`, because the two answers ask for the same thing for opposite
+/// reasons: `Spent` says the grace this stage granted has run out, `Untimed`
+/// says it granted none — and a caller that cannot tell them apart cannot
+/// report which of the two cut its work off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Budget {
+    /// The stage's deadline has passed. Whatever is still in flight is over
+    /// budget.
+    Spent,
+    /// The stage carries no deadline: [`Stage::Running`] because no stop has
+    /// begun, [`Stage::Stopped`] because everything is already over. Nothing
+    /// was waited for.
+    Untimed,
+}
+
+impl Budget {
+    /// Whether a budget existed and has run out.
+    #[must_use]
+    pub fn is_spent(self) -> bool {
+        matches!(self, Self::Spent)
     }
 }
 
@@ -341,6 +491,36 @@ impl ShutdownController {
             ladder: Arc::clone(&self.ladder),
         }
     }
+
+    /// Makes `handle` report this ladder's stage.
+    ///
+    /// The handle is the only end of the lifecycle an arbitrary unit can
+    /// resolve, and on its own it carries one boolean. Attaching is what lets
+    /// that unit — or a test, or an application holding nothing else — tell
+    /// [`Stage::Draining`] from [`Stage::Stopping`] instead of guessing which
+    /// of the two a `true` meant.
+    ///
+    /// The first ladder attached is the one the handle reports, and a later
+    /// call changes nothing: a process runs one lifecycle, and the second
+    /// ladder a shutdown walk opens for its own units must not redefine what
+    /// the whole process reports.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kernel::{KernelHandle, ShutdownController};
+    /// use kernel::core::{ShutdownPolicy, Stage};
+    ///
+    /// let (controller, _shutdown) = ShutdownController::new(ShutdownPolicy::default());
+    /// let handle = KernelHandle::detached();
+    /// controller.attach(&handle);
+    ///
+    /// controller.begin_draining();
+    /// assert_eq!(handle.stage(), Stage::Draining);
+    /// ```
+    pub fn attach(&self, handle: &KernelHandle) {
+        handle.attach(&self.ladder);
+    }
 }
 
 impl fmt::Debug for ShutdownController {
@@ -373,6 +553,9 @@ impl fmt::Debug for ShutdownController {
 #[derive(Clone)]
 pub struct KernelHandle {
     requested: Arc<watch::Sender<bool>>,
+    /// The ladder this handle reports, once a driver has attached one. Empty
+    /// until then, and never replaced afterwards.
+    ladder: Arc<OnceLock<Arc<Ladder>>>,
 }
 
 impl KernelHandle {
@@ -380,7 +563,17 @@ impl KernelHandle {
     pub(crate) fn new() -> Self {
         Self {
             requested: Arc::new(watch::Sender::new(false)),
+            ladder: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Binds this handle to `ladder`, unless one is already bound.
+    ///
+    /// Private to this module, because `Ladder` is: the verbs that reach it
+    /// from outside are [`ShutdownController::attach`], held by whoever drives
+    /// the lifecycle, and `Shutdown::attach` beside it.
+    fn attach(&self, ladder: &Arc<Ladder>) {
+        let _ = self.ladder.set(Arc::clone(ladder));
     }
 
     /// Ask the kernel to stop.
@@ -398,9 +591,60 @@ impl KernelHandle {
     }
 
     /// Whether someone has already asked the kernel to stop.
+    ///
+    /// This is the REQUEST, not the ladder: it is `true` because
+    /// [`shutdown`](Self::shutdown) was called, and it stays `false` for a
+    /// stop that began some other way — a signal, an essential runnable
+    /// returning — however far the ladder has since climbed. What a unit
+    /// deciding whether to keep taking work should read is
+    /// [`stage`](Self::stage).
     #[must_use]
     pub fn is_shutting_down(&self) -> bool {
         *self.requested.borrow()
+    }
+
+    /// The stage the kernel's ladder is on.
+    ///
+    /// The whole ladder, not the boolean beside it: `Draining` means new work
+    /// is refused while work in flight continues, and `Stopping` means the
+    /// clock is running — two instructions a unit cannot act on differently if
+    /// all it can read is that a stop happened.
+    ///
+    /// [`Stage::Running`] until a lifecycle driver has
+    /// [`attach`](ShutdownController::attach)ed its ladder, which is also the
+    /// honest answer for a handle with no kernel behind it: nothing has moved
+    /// because there is nothing to move. Asking for a stop does not move it
+    /// either — [`shutdown`](Self::shutdown) records a request, and the driver
+    /// is what turns that request into a transition.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kernel::KernelHandle;
+    /// use kernel::core::Stage;
+    ///
+    /// let handle = KernelHandle::detached();
+    /// handle.shutdown();
+    ///
+    /// // Asked for, not yet begun: the request is recorded, the ladder is not
+    /// // this handle's to move.
+    /// assert!(handle.is_shutting_down());
+    /// assert_eq!(handle.stage(), Stage::Running);
+    /// ```
+    #[must_use]
+    pub fn stage(&self) -> Stage {
+        self.ladder
+            .get()
+            .map_or(Stage::Running, |ladder| ladder.stage())
+    }
+
+    /// The instant the current stage must end by, once a ladder is attached.
+    ///
+    /// `None` when no ladder is attached, and `None` on an untimed stage —
+    /// which does not mean unbounded; see [`Shutdown::deadline`].
+    #[must_use]
+    pub fn deadline(&self) -> Option<Instant> {
+        self.ladder.get().and_then(|ladder| ladder.deadline())
     }
 
     /// Resolves when someone has asked the kernel to stop.
@@ -434,6 +678,7 @@ impl fmt::Debug for KernelHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KernelHandle")
             .field("requested", &self.is_shutting_down())
+            .field("stage", &self.stage())
             .finish_non_exhaustive()
     }
 }
@@ -720,6 +965,171 @@ mod tests {
             .expect("waiter panicked");
 
         assert!(turns >= 3, "{turns}");
+    }
+
+    // ----------------------------------------------------------------------
+    // The stage, read from the handle
+    // ----------------------------------------------------------------------
+
+    #[test]
+    fn handle_reads_stage() {
+        let (controller, _shutdown) = ShutdownController::new(policy());
+        let handle = KernelHandle::detached();
+        controller.attach(&handle);
+
+        assert_eq!(handle.stage(), Stage::Running);
+        controller.begin_draining();
+        assert_eq!(handle.stage(), Stage::Draining);
+        // The rung a boolean cannot tell from the one above it.
+        controller.begin_stopping();
+        assert_eq!(handle.stage(), Stage::Stopping);
+        controller.finish();
+        assert_eq!(handle.stage(), Stage::Stopped);
+    }
+
+    #[test]
+    fn attached_handle_clones() {
+        let (controller, _shutdown) = ShutdownController::new(policy());
+        let handle = KernelHandle::detached();
+        let clone = handle.clone();
+        controller.attach(&handle);
+        controller.begin_stopping();
+
+        // Attaching one clone attaches every clone: they are one handle.
+        assert_eq!(clone.stage(), Stage::Stopping);
+        assert!(format!("{handle:?}").contains("Stopping"));
+    }
+
+    #[test]
+    fn handle_keeps_first_ladder() {
+        let (first, _one) = ShutdownController::new(policy());
+        let (second, _two) = ShutdownController::new(policy());
+        let handle = KernelHandle::detached();
+
+        first.attach(&handle);
+        second.attach(&handle);
+        second.begin_stopping();
+
+        // The second ladder a shutdown walk opens does not get to redefine
+        // what the whole process reports.
+        assert_eq!(handle.stage(), Stage::Running);
+        first.begin_draining();
+        assert_eq!(handle.stage(), Stage::Draining);
+    }
+
+    #[test]
+    fn request_is_not_a_stage() {
+        let handle = KernelHandle::detached();
+        handle.shutdown();
+
+        assert!(handle.is_shutting_down());
+        assert_eq!(handle.stage(), Stage::Running);
+        assert_eq!(handle.deadline(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn handle_reads_deadline() {
+        let (controller, shutdown) = ShutdownController::new(policy());
+        let handle = KernelHandle::detached();
+        controller.attach(&handle);
+
+        controller.begin_stopping();
+
+        assert_eq!(handle.deadline(), shutdown.deadline());
+        assert!(handle.deadline().is_some());
+    }
+
+    // ----------------------------------------------------------------------
+    // Waiting out the stage's own deadline
+    // ----------------------------------------------------------------------
+
+    #[tokio::test(start_paused = true)]
+    async fn deadline_wait_spends() {
+        let (controller, shutdown) = ShutdownController::new(policy());
+        controller.begin_stopping();
+        let started = TokioInstant::now();
+
+        let budget = shutdown.sleep_until_deadline().await;
+
+        assert_eq!(budget, Budget::Spent);
+        assert!(budget.is_spent());
+        assert!(started.elapsed() >= policy().stop);
+    }
+
+    // An untimed stage grants no grace rather than endless grace: the caller
+    // is told at once, so the cut it was going to make still happens.
+    #[tokio::test(start_paused = true)]
+    async fn untimed_answers_now() {
+        let (_controller, shutdown) = ShutdownController::new(policy());
+        let started = TokioInstant::now();
+
+        let budget = timeout(Duration::from_secs(600), shutdown.sleep_until_deadline())
+            .await
+            .expect("an untimed stage must not park the caller");
+
+        assert_eq!(budget, Budget::Untimed);
+        assert!(!budget.is_spent());
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    // A deadline read once belongs to the stage that was current when it was
+    // read. This wait belongs to the stage that is current when it fires.
+    #[tokio::test(start_paused = true)]
+    async fn wait_follows_ladder() {
+        let (controller, shutdown) = ShutdownController::new(policy());
+        controller.begin_draining();
+        let started = TokioInstant::now();
+        let waiter = shutdown.clone();
+        let task = tokio::spawn(async move { waiter.sleep_until_deadline().await });
+
+        tokio::task::yield_now().await;
+        sleep(Duration::from_secs(1)).await;
+        controller.begin_stopping();
+
+        let budget = task.await.expect("waiter panicked");
+
+        assert_eq!(budget, Budget::Spent);
+        // Not the drain deadline three seconds in: the stopping budget,
+        // counted from the rung the ladder actually climbed.
+        let landed = started.elapsed();
+        assert!(landed >= Duration::from_secs(8), "{landed:?}");
+        assert!(landed < Duration::from_secs(9), "{landed:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn finish_ends_the_wait() {
+        let (controller, shutdown) = ShutdownController::new(policy());
+        controller.begin_stopping();
+        let waiter = shutdown.clone();
+        let task = tokio::spawn(async move { waiter.sleep_until_deadline().await });
+
+        tokio::task::yield_now().await;
+        sleep(Duration::from_secs(1)).await;
+        controller.finish();
+
+        let budget = timeout(Duration::from_secs(1), task)
+            .await
+            .expect("a ladder past its last rung must not hold the wait")
+            .expect("waiter panicked");
+
+        assert_eq!(budget, Budget::Untimed);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn entry_follows_stage() {
+        let (controller, shutdown) = ShutdownController::new(policy());
+        assert_eq!(shutdown.entered(), None);
+
+        controller.begin_draining();
+        let drained = shutdown.entered().expect("the stage was entered");
+        assert_eq!(drained, TokioInstant::now().into_std());
+
+        sleep(Duration::from_secs(2)).await;
+        controller.begin_stopping();
+
+        // The start moves with the rung: a budget counted from a stale start
+        // is a budget already spent.
+        assert_eq!(shutdown.entered(), Some(drained + Duration::from_secs(2)));
     }
 
     #[test]

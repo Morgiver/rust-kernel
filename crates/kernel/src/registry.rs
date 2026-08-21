@@ -38,7 +38,7 @@ use crate::component::Component;
 use crate::container::erased::erase_build;
 use crate::container::{BindingEntry, Container};
 use crate::dispatcher::{ErasedListener, Listener, erase_listener};
-use crate::provider::{Binding, Provider};
+use crate::provider::{Binding, BuildFn, Provider};
 use crate::runnable::Runnable;
 
 /// The bundle an entry is attributed to before any bundle has entered.
@@ -213,6 +213,12 @@ impl fmt::Debug for RegistryParts {
 /// dependency edge, and reachable only from the hook that runs after every
 /// bundle has registered. They add no kind of thing to the kernel — they
 /// overwrite one of these seven — so they are not an eighth verb.
+///
+/// Nor is [`Binding::also`], which is reachable from a bundle and is not a
+/// verb either. It records no new thing: it names a second contract answered by
+/// the object one of these seven just recorded, and hands back the very `Arc`
+/// that binding hands back. What a verb does is put an object into the kernel,
+/// and `also` puts none in.
 ///
 /// Two read-only accessors sit alongside them —
 /// [`config`](Self::config) and [`telemetry`](Self::telemetry). They record
@@ -671,6 +677,7 @@ impl Registry {
             bundle: self.bundle,
             lifetime: provider.lifetime,
             requires: provider.requires,
+            requires_scoped: provider.requires_scoped,
             build: erase_build(provider.build),
             is_default: false,
             order,
@@ -693,6 +700,7 @@ impl Registry {
             entry.bundle = bundle;
             entry.lifetime = provider.lifetime;
             entry.requires = provider.requires;
+            entry.requires_scoped = provider.requires_scoped;
             entry.build = erase_build(provider.build);
             return;
         }
@@ -702,11 +710,12 @@ impl Registry {
 
     /// A handle on the binding just recorded.
     fn last_binding<C: ?Sized + Send + Sync + 'static>(&mut self) -> Binding<'_, C> {
-        let entry = self
+        let index = self
             .bindings
-            .last_mut()
+            .len()
+            .checked_sub(1)
             .expect("a binding was recorded immediately before this call");
-        Binding::new(&mut entry.is_default)
+        Binding::new(&mut self.bindings, index)
     }
 
     /// Forces a lifecycle-managed unit's binding to [`Lifetime::Shared`],
@@ -742,6 +751,116 @@ impl fmt::Debug for Registry {
             .field("declared_points", &self.declared_points.len())
             .field("contributions", &self.contributions.len())
             .finish_non_exhaustive()
+    }
+}
+
+// --------------------------------------------------------------------------
+// One instance, several contracts
+// --------------------------------------------------------------------------
+
+/// Aliasing: a second contract answered by the binding just recorded.
+///
+/// This lives on the handle a binding verb already returns rather than in the
+/// list of verbs, and deliberately: the closed list of seven is what a bundle
+/// may *record*, and an alias records no new thing. It names a contract the
+/// object recorded a moment ago also answers.
+impl<C: ?Sized + Send + Sync + 'static> Binding<'_, C> {
+    /// Answers `A` with the very object this binding provides.
+    ///
+    /// One unit that implements two contracts — the concrete type the kernel
+    /// boots and the abstraction its collaborators resolve — is registered
+    /// once and reached under both names. `cast` is the widening the language
+    /// cannot perform on its own: `|unit| unit as Arc<dyn Other>`.
+    ///
+    /// # What the alias is
+    ///
+    /// An entry that resolves the binding it aliases and widens the result. It
+    /// therefore:
+    ///
+    /// * hands back the **same** `Arc` the aliased contract hands back, so
+    ///   "one instance" is mechanical and not a convention two providers keep;
+    /// * carries the aliased binding's [`Lifetime`], so a `Scoped` unit stays
+    ///   one value per scope under both contracts;
+    /// * declares the aliased contract as its requirement, so phase three
+    ///   orders it after what it aliases and the debug guard is satisfied;
+    /// * takes no registration rank of its own — it stands at the rank of the
+    ///   binding it aliases, because it is not a second registration.
+    ///
+    /// A `Factory` binding is rebuilt on every resolution by definition, so
+    /// there the alias hands back a fresh value like any other resolution of
+    /// it.
+    ///
+    /// The alias is unnamed, which is what makes it the implementation
+    /// [`Container::get`] returns for `A`. Two aliases claiming one contract,
+    /// or an alias colliding with an ordinary binding, is
+    /// [`DuplicateDefault`](kernel_core::ResolveError::DuplicateDefault) —
+    /// reported by phase three with everything else, never a silent overwrite.
+    ///
+    /// Aliases chain, and so does [`as_default`](Binding::as_default): the
+    /// handle keeps adjusting the binding it was returned for, not the last
+    /// alias recorded.
+    ///
+    /// Not `#[must_use]`: the alias is recorded by the call itself, and the
+    /// returned handle exists only so that a second call can chain onto it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use kernel::{Provider, Registry};
+    ///
+    /// trait Surface: Send + Sync + 'static {}
+    ///
+    /// struct Plain;
+    /// impl Surface for Plain {}
+    ///
+    /// # fn example(registry: &mut Registry) {
+    /// registry
+    ///     .provide(Provider::from_value(Arc::new(Plain)))
+    ///     .also(|plain: Arc<Plain>| plain as Arc<dyn Surface>);
+    /// # }
+    /// ```
+    pub fn also<A>(self, cast: impl Fn(Arc<C>) -> Arc<A> + Send + Sync + 'static) -> Self
+    where
+        A: ?Sized + Send + Sync + 'static,
+    {
+        let aliased = &self.entries[self.index];
+        let source = aliased.contract;
+        let bundle = aliased.bundle;
+        let lifetime = aliased.lifetime;
+        let order = aliased.order;
+        let alias = ContractRef::of::<A>();
+
+        let cast: Arc<dyn Fn(Arc<C>) -> Arc<A> + Send + Sync> = Arc::new(cast);
+        let name = source.name();
+        let build: BuildFn<A> = Box::new(move |container| {
+            let cast = Arc::clone(&cast);
+            Box::pin(async move {
+                let value = match name {
+                    Some(name) => container.get_named::<C>(name).await,
+                    None => container.get::<C>().await,
+                }
+                .map_err(|error| BuildError::new(alias.type_name(), Box::new(error)))?;
+                Ok(cast(value))
+            })
+        });
+
+        self.entries.push(BindingEntry {
+            id: ContractId::of::<A>(),
+            contract: alias,
+            bundle,
+            lifetime,
+            // The one resolution the alias performs, declared where every
+            // other resolution is declared.
+            requires: vec![source],
+            // What the unit resolves inside a scope it opens is declared on
+            // the binding that builds it; the alias builds nothing.
+            requires_scoped: Vec::new(),
+            build: erase_build(build),
+            is_default: false,
+            order,
+        });
+        self
     }
 }
 
@@ -1091,6 +1210,127 @@ mod tests {
         let _ = registry.provide_named("secondary", surface()).as_default();
 
         assert!(registry.into_parts().bindings[0].is_default);
+    }
+
+    // ------------------------------------------------------------------
+    // One instance, several contracts
+    // ------------------------------------------------------------------
+
+    // The gap this closes: without it, one object under two contracts costs a
+    // second provider that resolves the first, and nothing makes the two the
+    // same object. Here it is mechanical -- one build, one `Arc`.
+    #[tokio::test]
+    async fn alias_shares_instance() {
+        let built = counter();
+        let handle = Arc::clone(&built);
+        let mut registry = registry();
+        registry
+            .provide(Provider::from_fn(move |_container| {
+                let handle = Arc::clone(&handle);
+                Box::pin(async move {
+                    handle.fetch_add(1, Ordering::SeqCst);
+                    Ok(Arc::new(Plain))
+                })
+            }))
+            .also(|plain: Arc<Plain>| plain as Arc<dyn Surface>);
+
+        let container = container(registry.into_parts());
+        let concrete = container.get::<Plain>().await.expect("concrete");
+        let surface = container.get::<dyn Surface>().await.expect("alias");
+
+        assert_eq!(built.load(Ordering::SeqCst), 1);
+        assert!(core::ptr::addr_eq(
+            Arc::as_ptr(&concrete),
+            Arc::as_ptr(&surface)
+        ));
+    }
+
+    // An alias resolves the exact binding it aliases. A named one is reachable
+    // only by its name, so an alias that fell back to `get` would hand back
+    // the unnamed sibling instead.
+    #[tokio::test]
+    async fn alias_follows_the_name() {
+        let mut registry = registry();
+        registry.provide(Provider::from_value(Arc::new(Plain)));
+        registry
+            .provide_named("secondary", Provider::from_value(Arc::new(Plain)))
+            .also(|plain: Arc<Plain>| plain as Arc<dyn Surface>);
+
+        let container = container(registry.into_parts());
+        let named = container
+            .get_named::<Plain>("secondary")
+            .await
+            .expect("named");
+        let surface = container.get::<dyn Surface>().await.expect("alias");
+
+        assert!(core::ptr::addr_eq(
+            Arc::as_ptr(&named),
+            Arc::as_ptr(&surface)
+        ));
+    }
+
+    // The alias is the same object, so it is kept for as long: a scoped unit
+    // stays one value per scope under both contracts.
+    #[tokio::test]
+    async fn alias_keeps_lifetime() {
+        let mut registry = registry();
+        registry
+            .provide(
+                Provider::from_fn(|_container| Box::pin(async { Ok(Arc::new(Plain)) }))
+                    .lifetime(Lifetime::Scoped),
+            )
+            .also(|plain: Arc<Plain>| plain as Arc<dyn Surface>);
+
+        let parts = registry.into_parts();
+        assert_eq!(parts.bindings[1].lifetime, Lifetime::Scoped);
+        let scope = container(parts).scope();
+
+        let concrete = scope.get::<Plain>().await.expect("concrete");
+        let surface = scope.get::<dyn Surface>().await.expect("alias");
+
+        assert!(core::ptr::addr_eq(
+            Arc::as_ptr(&concrete),
+            Arc::as_ptr(&surface)
+        ));
+    }
+
+    // The alias states the one resolution it performs, so phase three orders
+    // it after what it aliases instead of taking it for a free-standing
+    // binding.
+    #[test]
+    fn alias_declares_its_source() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry
+            .provide_named("secondary", Provider::from_value(Arc::new(Plain)))
+            .also(|plain: Arc<Plain>| plain as Arc<dyn Surface>);
+        registry.contribute(Item);
+
+        let parts = registry.into_parts();
+        let alias = &parts.bindings[1];
+        assert_eq!(alias.contract, ContractRef::of::<dyn Surface>());
+        assert_eq!(alias.requires, [ContractRef::named::<Plain>("secondary")]);
+        assert!(alias.requires_scoped.is_empty());
+        assert_eq!(alias.bundle, "one");
+        // Not a second registration: it stands at the rank of what it aliases,
+        // and the next verb takes the rank that follows.
+        assert_eq!(alias.order, parts.bindings[0].order);
+        assert_eq!(parts.contributions[0].order, 1);
+    }
+
+    // The handle keeps adjusting the binding it was returned for, so an alias
+    // does not steal the default position from it.
+    #[test]
+    fn alias_leaves_handle_alone() {
+        let mut registry = registry();
+        let _ = registry
+            .provide_named("secondary", Provider::from_value(Arc::new(Plain)))
+            .also(|plain: Arc<Plain>| plain as Arc<dyn Surface>)
+            .as_default();
+
+        let parts = registry.into_parts();
+        assert!(parts.bindings[0].is_default);
+        assert!(!parts.bindings[1].is_default);
     }
 
     // ------------------------------------------------------------------

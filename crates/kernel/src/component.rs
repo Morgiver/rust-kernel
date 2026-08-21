@@ -7,11 +7,13 @@
 //! separation is operational rather than philosophical:
 //!
 //! * A **component** is instantiated in a known order, told to
-//!   [`boot`](Component::boot), and later told to
-//!   [`shutdown`](Component::shutdown). It typically owns a resource — a pool,
-//!   a connection, a cache — and the kernel guarantees when that resource is
-//!   opened and when it is closed. Everything the kernel knows about a
-//!   component is its identity and those two moments.
+//!   [`boot`](Component::boot), told to [`drain`](Component::drain) when the
+//!   ladder reaches [`Stage::Draining`](kernel_core::Stage::Draining), and
+//!   later told to [`shutdown`](Component::shutdown). It typically owns a
+//!   resource — a pool, a connection, a cache — and the kernel guarantees when
+//!   that resource is opened, when it stops accepting new work, and when it is
+//!   closed. Everything the kernel knows about a component is its identity and
+//!   those three moments.
 //! * A **runnable** is a task. It is started once every component has booted
 //!   and it keeps running until the shutdown token fires.
 //!
@@ -44,9 +46,10 @@ use crate::shutdown::{KernelHandle, Shutdown, ShutdownController};
 /// A unit whose lifecycle the kernel manages.
 ///
 /// The kernel instantiates a component in dependency order, calls
-/// [`boot`](Self::boot) on it, and — in reverse order, when the process stops —
-/// calls [`shutdown`](Self::shutdown). Nothing else about the type is the
-/// kernel's business.
+/// [`boot`](Self::boot) on it, calls [`drain`](Self::drain) on it when the
+/// shutdown ladder reaches its first rung, and — in reverse order, once every
+/// runnable has wound down — calls [`shutdown`](Self::shutdown). Nothing else
+/// about the type is the kernel's business.
 ///
 /// # `boot` prepares, `run` runs
 ///
@@ -132,11 +135,55 @@ pub trait Component: Send + Sync + 'static {
     /// continuously belongs in a [`Runnable`](crate::runnable::Runnable).
     fn boot<'a>(&'a self, cx: &'a BootContext<'a>) -> BoxFuture<'a, Result<(), ComponentError>>;
 
+    /// Refuse new work; what is already in flight keeps going.
+    ///
+    /// Called once, as the shutdown ladder reaches
+    /// [`Stage::Draining`](kernel_core::Stage::Draining) and **before any
+    /// runnable is asked to wind down**. A component that owns the resource
+    /// new work arrives through closes that door here and returns; the
+    /// runnables that were reading from it are still running, and what they
+    /// already took is still theirs to finish.
+    ///
+    /// The default does nothing and succeeds, so a component that accepts no
+    /// work from outside costs nothing.
+    ///
+    /// # Why it is not the runnable's job
+    ///
+    /// Refusing new work is a property of the RESOURCE, not of the loop that
+    /// reads it, and the resource belongs to the component. Without this hook a
+    /// component that owns one has to be split in two — a component holding it
+    /// and a runnable closing it — for no reason other than that the runnable
+    /// was the only unit that could see the drain.
+    ///
+    /// # Bounds
+    ///
+    /// Bounded like every other lifecycle call, on the
+    /// [`ShutdownPolicy`]'s drain budget: every component drains at once, each
+    /// with the whole budget, so no component's overrun shortens another's.
+    /// A component still running when that budget elapses is dropped, its
+    /// overrun is recorded, and the ladder goes on — the rest of the shutdown
+    /// is not held up by it.
+    ///
+    /// # What the context reports
+    ///
+    /// [`ShutdownContext::shutdown`] is on
+    /// [`Stage::Draining`](kernel_core::Stage::Draining), and
+    /// [`ShutdownContext::deadline`] is the instant this component's own drain
+    /// is cut at.
+    fn drain<'a>(
+        &'a self,
+        cx: &'a ShutdownContext<'a>,
+    ) -> BoxFuture<'a, Result<(), ComponentError>> {
+        let _ = cx;
+        Box::pin(async { Ok(()) })
+    }
+
     /// Release what [`boot`](Self::boot) acquired.
     ///
-    /// Called in reverse boot order, so a component may still use everything it
-    /// depended on. The default does nothing and succeeds, because a component
-    /// that owns no resource has nothing to release.
+    /// Called in reverse boot order, after every runnable has wound down, so a
+    /// component may still use everything it depended on. The default does
+    /// nothing and succeeds, because a component that owns no resource has
+    /// nothing to release.
     ///
     /// Failing here does not stop the shutdown walk: the error is recorded and
     /// the remaining components are still stopped.
@@ -518,7 +565,12 @@ impl fmt::Debug for BootBuilder {
     }
 }
 
-/// What a component is handed while it stops.
+/// What a component is handed while it stops — at
+/// [`drain`](Component::drain) and again at [`shutdown`](Component::shutdown).
+///
+/// One shape for both calls, because both read the same two facts and neither
+/// reads anything else; [`shutdown`](Self::shutdown) is what tells them apart,
+/// reporting `Draining` for the first and `Stopping` for the second.
 ///
 /// It carries no extension points: collecting during shutdown would mean a
 /// component is still assembling itself while the process is being torn down.
@@ -878,7 +930,7 @@ impl fmt::Debug for ShutdownBuilder {
 mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
 
     use kernel_core::{Health, HealthProbe, Stage};
     use tokio::time::Instant as TokioInstant;
@@ -896,16 +948,21 @@ mod tests {
 
     struct Holder {
         booted: AtomicUsize,
+        drained: AtomicUsize,
         stopped: AtomicUsize,
         seen: AtomicUsize,
+        /// The stage the drain call observed, `None` until it runs.
+        at: Mutex<Option<Stage>>,
     }
 
     impl Holder {
         fn new() -> Self {
             Self {
                 booted: AtomicUsize::new(0),
+                drained: AtomicUsize::new(0),
                 stopped: AtomicUsize::new(0),
                 seen: AtomicUsize::new(0),
+                at: Mutex::new(None),
             }
         }
     }
@@ -927,6 +984,17 @@ mod tests {
                 self.booted.fetch_add(1, Ordering::Relaxed);
                 self.seen
                     .store(cx.collect::<Alpha>().len(), Ordering::Relaxed);
+                Ok(())
+            })
+        }
+
+        fn drain<'a>(
+            &'a self,
+            cx: &'a ShutdownContext<'a>,
+        ) -> BoxFuture<'a, Result<(), ComponentError>> {
+            Box::pin(async move {
+                self.drained.fetch_add(1, Ordering::Relaxed);
+                *self.at.lock().expect("stage") = Some(cx.shutdown().stage());
                 Ok(())
             })
         }
@@ -1008,6 +1076,34 @@ mod tests {
 
         assert_eq!(holder.booted.load(Ordering::Relaxed), 1);
         assert_eq!(holder.stopped.load(Ordering::Relaxed), 1);
+    }
+
+    /// The hook the acceptor probe had no way to reach: a component sees the
+    /// rung, not only the end.
+    #[tokio::test]
+    async fn drain_reads_the_rung() {
+        let (detached, controller) = ShutdownContext::detached();
+        let holder = Holder::new();
+
+        controller.begin_draining();
+        let cx = detached.context();
+        holder.drain(&cx).await.expect("drain");
+
+        assert_eq!(holder.drained.load(Ordering::Relaxed), 1);
+        assert_eq!(holder.stopped.load(Ordering::Relaxed), 0);
+        assert_eq!(*holder.at.lock().expect("stage"), Some(Stage::Draining));
+    }
+
+    #[tokio::test]
+    async fn default_drain_succeeds() {
+        let container = container();
+        let dispatcher = dispatcher();
+        let (_controller, shutdown) = ShutdownController::new(ShutdownPolicy::default());
+        let stop = ShutdownContext::new(&container, &dispatcher, &shutdown);
+
+        // A component that accepts no work from outside implements nothing and
+        // costs nothing.
+        assert!(Bare.drain(&stop).await.is_ok());
     }
 
     #[tokio::test]

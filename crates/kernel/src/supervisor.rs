@@ -205,13 +205,19 @@ impl Supervisor {
         container: &Container,
         delay: Option<Duration>,
     ) -> JoinHandle<Result<(), RunError>> {
+        // Named with the runnable's own descriptor, so that
+        // `RunContext::deadline` reports the budget being enforced on THIS
+        // unit. Without it a runnable that declared a `stop_timeout` reads the
+        // ladder's deadline and hurries — or does not — for a bound nobody is
+        // holding it to.
         let context = RunContext::new(
             id,
             container.clone(),
             Arc::clone(&self.dispatcher),
             self.shutdown.clone(),
             self.handle.clone(),
-        );
+        )
+        .with_descriptor(runnable.descriptor());
         let runnable = Arc::clone(runnable);
         let shutdown = self.shutdown.clone();
 
@@ -461,6 +467,9 @@ async fn next_ended(slots: &mut [Slot]) -> (usize, Ended) {
 mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
+    use std::sync::Mutex;
+    use std::time::Instant as StdInstant;
+
     use kernel_core::{Backoff, BoxFuture, ConfigTree, RunErrorKind, ShutdownPolicy};
     use tokio::time::{Duration, timeout};
 
@@ -567,6 +576,34 @@ mod tests {
         }
     }
 
+    /// The two deadlines a stopping runnable can read: its own, and the
+    /// ladder's.
+    type Bounds = Option<(Option<StdInstant>, Option<StdInstant>)>;
+
+    /// Reads its own stop bound and the ladder's, at the moment it is stopped.
+    struct Measured {
+        descriptor: RunnableDescriptor,
+        seen: Arc<Mutex<Bounds>>,
+    }
+
+    impl Runnable for Measured {
+        fn name() -> &'static str {
+            "measured"
+        }
+
+        fn descriptor(&self) -> RunnableDescriptor {
+            self.descriptor
+        }
+
+        fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
+            Box::pin(async move {
+                cx.shutdown().stopping().await;
+                *self.seen.lock().expect("seen") = Some((cx.deadline(), cx.shutdown().deadline()));
+                Ok(())
+            })
+        }
+    }
+
     /// Returns at the first rung instead of waiting for the second.
     struct Brisk(RunnableDescriptor);
 
@@ -639,6 +676,29 @@ mod tests {
 
     fn brief() -> ShutdownPolicy {
         ShutdownPolicy::new(Duration::from_secs(1), Duration::from_secs(2))
+    }
+
+    /// The gap: the supervisor built the context and never told it what the
+    /// runnable had declared, so a unit reading its own bound read the
+    /// ladder's.
+    #[tokio::test(start_paused = true)]
+    async fn descriptor_bounds_the_unit() {
+        let seen = Arc::new(Mutex::new(None));
+        let unit: Arc<dyn Runnable> = Arc::new(Measured {
+            descriptor: essential().stop_timeout(Duration::from_millis(200)),
+            seen: Arc::clone(&seen),
+        });
+        let (supervisor, controller, _handle) = started(vec![unit], brief());
+
+        supervisor.stop(&controller).await;
+
+        let (own, ladder) = seen.lock().expect("seen").expect("it was stopped");
+        let own = own.expect("its own bound");
+        let ladder = ladder.expect("the ladder's");
+
+        // Two hundred milliseconds, not the two seconds the ladder grants the
+        // process.
+        assert!(own < ladder);
     }
 
     #[tokio::test(start_paused = true)]

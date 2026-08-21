@@ -19,7 +19,8 @@
 //!    and left silent. Then the stop is requested, and three facts are printed
 //!    in the order they become true:
 //!    * the door is shut — [`Doorway::is_open`] goes false the moment the
-//!      acceptor reacts to `Draining`;
+//!      socket's own `drain` runs, and [`KernelHandle::stage`] says which rung
+//!      that was;
 //!    * a *new* connection is refused, by the operating system, with no process
 //!      code involved;
 //!    * the request that was already in flight **finishes and its caller reads
@@ -34,14 +35,13 @@
 //! still answered: what the window protects is the whole *conversation*, not
 //! only the request that was already admitted.
 //!
-//! Whether its late line is served or refused depends on which door shut
-//! first. The socket is closed by the acceptor the instant `Draining` fires;
-//! the queue's door is closed by the runnable that works it, which only comes
-//! up for air between jobs. Under the settings this application ships the hand
-//! is holding a 250 ms job at that moment, so the late line is admitted and
-//! answered `ok` — a moment later it would have read `closing`. Both are
-//! answers. Neither door replies with a reset, and that is the property worth
-//! having.
+//! Whether its late line is served or refused is a race between two doors that
+//! shut on the same rung: both the socket and the queue close themselves in
+//! their own `drain`, told at the same instant and each holding the whole drain
+//! budget. Under the settings this application ships the late line lands within
+//! a millisecond of both, so it reads `ok` or `closing` depending on which of
+//! the two won. Both are answers. Neither door replies with a reset, and that
+//! is the property worth having.
 //!
 //! # Why every wait here is bounded
 //!
@@ -142,9 +142,15 @@ async fn script(doorway: &Doorway, handle: &KernelHandle, clock: &Clock) -> io::
     handle.shutdown();
 
     if shut(doorway).await {
-        clock.say("the door is shut — the acceptor stopped accepting at Draining");
+        clock.say(&format!(
+            "the door is shut — the ladder is at {:?} and the socket refused itself",
+            handle.stage()
+        ));
     } else {
-        clock.say("the door is STILL OPEN — the acceptor did not react to Draining");
+        clock.say(&format!(
+            "the door is STILL OPEN at {:?} — the drain did not reach the socket",
+            handle.stage()
+        ));
     }
 
     match Held::open(address).await {
@@ -164,9 +170,10 @@ async fn script(doorway: &Doorway, handle: &KernelHandle, clock: &Clock) -> io::
 
 /// Waits for the door to shut, and says whether it did.
 ///
-/// [`Doorway::is_open`] is the public fact that the acceptor reacted: the
-/// component owns the socket, the runnable closes it on the way into the drain
-/// window, and both are visible from out here without a hook of any kind.
+/// [`Doorway::is_open`] is the public fact that the drain reached the socket:
+/// the component owns it and closes it in its own `drain`, on the rung where
+/// refusing new work belongs. The rung itself is read separately, from
+/// [`KernelHandle::stage`] — nothing here has to infer the stage from the door.
 ///
 /// Bounded by construction — [`GLANCES`] times [`GLANCE`] — so a regression
 /// that leaves the door open fails this line instead of parking the process.

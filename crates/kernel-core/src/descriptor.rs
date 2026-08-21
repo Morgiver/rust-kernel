@@ -370,6 +370,9 @@ impl Default for Backoff {
 }
 
 impl Backoff {
+    /// No delay at all: retry as soon as the policy allows it.
+    pub const NONE: Backoff = Backoff::Fixed(Duration::ZERO);
+
     /// Delay before attempt number `attempt`, zero-based.
     ///
     /// Deterministic and saturating: an absurd attempt number yields `max`
@@ -735,11 +738,18 @@ mod tests {
     fn restart_allows_counts() {
         assert!(!RestartPolicy::Never.allows(0));
 
-        let policy = RestartPolicy::on_failure(2, Backoff::Fixed(Duration::ZERO));
+        let policy = RestartPolicy::on_failure(2, Backoff::NONE);
         assert!(policy.allows(0));
         assert!(policy.allows(1));
         assert!(!policy.allows(2));
         assert!(!RestartPolicy::on_failure(0, Backoff::Fixed(Duration::ZERO)).allows(0));
+    }
+
+    #[test]
+    fn zero_backoff_constant() {
+        assert_eq!(Backoff::NONE, Backoff::Fixed(Duration::ZERO));
+        assert_eq!(Backoff::NONE.delay(0), Duration::ZERO);
+        assert_eq!(Backoff::NONE.delay(u32::MAX), Duration::ZERO);
     }
 
     #[test]

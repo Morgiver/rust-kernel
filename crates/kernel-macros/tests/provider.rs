@@ -109,6 +109,11 @@ async fn generated_list_holds() {
     assert_eq!(surface.mark(), 8);
 }
 
+// Debug only, like every other test of this guard in the workspace (see
+// `crates/kernel/tests/lifecycle.rs`): the container's declaration check is
+// compiled out under `--release`, so an unconditional `should_panic` here is a
+// claim about a guard that is not there.
+#[cfg(debug_assertions)]
 #[tokio::test]
 #[should_panic(expected = "did not declare in `requires`")]
 async fn hand_written_list_drifts() {

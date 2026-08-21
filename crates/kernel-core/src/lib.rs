@@ -24,9 +24,9 @@ pub use descriptor::{
     RunnableDescriptor, ShutdownPolicy, Stage,
 };
 pub use error::{
-    BoxSource, BuildError, ComponentError, ConfigError, ConfigErrorKind, ContainerError,
-    DispatchError, KernelError, ListenerError, Outcome, RegisterError, ResolveError, RunError,
-    RunErrorKind, ShutdownError, ShutdownErrorKind,
+    AbortReason, Aborted, BoxSource, BuildError, ComponentError, ConfigError, ConfigErrorKind,
+    ContainerError, DispatchError, KernelError, ListenerError, Outcome, RegisterError,
+    ResolveError, RunError, RunErrorKind, ShutdownError, ShutdownErrorKind,
 };
 pub use event::{Event, Flow};
 pub use extension::Extension;

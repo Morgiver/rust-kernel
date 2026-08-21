@@ -470,7 +470,7 @@ La séparation retenue est **opérationnelle**, donc vérifiable :
 
 | | Component | Service |
 |---|---|---|
-| Reçoit `boot` / `shutdown` | Oui | Non |
+| Reçoit `boot` / `drain` / `shutdown` | Oui | Non |
 | Possède une ressource (pool, socket, client) | Typiquement | Non |
 | Instancié quand | Phase 4, ordre topologique | Phase 4 aussi s'il est `Shared` — toute la table est balayée (§ 2) ; à la résolution s'il est `Scoped` ou `Factory` |
 | Porte un nom de lifecycle déclaré | Oui, `Component::name` : c'est lui que le plan de boot indexe et que la telemetry met en cause | Non |
@@ -496,6 +496,14 @@ pub trait Component: Send + Sync + 'static {
     fn descriptor(&self) -> ComponentDescriptor;
 
     fn boot<'a>(&'a self, cx: &'a BootContext<'a>) -> BoxFuture<'a, Result<(), ComponentError>>;
+
+    /// Appelé quand l'échelle atteint `Draining`, AVANT qu'un seul Runnable
+    /// n'ait été prié de s'arrêter. C'est là qu'un Component ferme la porte par
+    /// laquelle le travail neuf arrive.
+    fn drain<'a>(&'a self, cx: &'a ShutdownContext<'a>) -> BoxFuture<'a, Result<(), ComponentError>> {
+        let _ = cx;
+        Box::pin(async { Ok(()) })
+    }
 
     fn shutdown<'a>(&'a self, cx: &'a ShutdownContext<'a>) -> BoxFuture<'a, Result<(), ComponentError>> {
         let _ = cx;
@@ -523,6 +531,15 @@ phase 4.
 
 Un Component qui doit faire tourner quelque chose en continu **n'utilise pas
 `boot` pour ça** : il enregistre un `Runnable`. `boot` prépare, `run` tourne.
+
+Un Component a donc **trois** moments, pas deux : `boot` acquiert, `drain`
+refuse le travail neuf, `shutdown` relâche. Le refus du travail neuf est une
+propriété de la **ressource**, pas de la boucle qui la lit : sans `drain`, un
+Component possédant une ressource devrait être coupé en deux — un Component qui
+la tient et un Runnable qui la ferme — pour la seule raison que le Runnable était
+la seule unité à voir l'échelle bouger. Ce qui reste au Runnable, et que rien
+d'autre ne peut faire, est le travail **déjà en vol** : lui donner la fenêtre de
+drain puis couper ce qui la dépasse (§ 13).
 
 ---
 
@@ -908,6 +925,13 @@ pub enum Outcome {
 nulle » opérationnel : `Failed` devient `ExitCode::FAILURE`, `Completed` et
 `ShutdownRequested` `ExitCode::SUCCESS`.
 
+Un `Outcome` seul ne peut pas rapporter un échec dont le run s'est **remis** :
+un Runnable `Ancillary` qui échoue et que sa politique redémarre laisse une
+sortie parfaitement propre. `Kernel::ran() -> Ending` est la lecture complète —
+l'`Outcome` plus `errors()`, toute fin anormale de la phase 5 que le verdict ne
+nomme pas lui-même. `Kernel::run()` reste le chemin court et rend l'`Outcome`
+seul.
+
 ---
 
 ## 13. Arrêt
@@ -948,6 +972,14 @@ impl Shutdown {
   l'inverse de l'ordre calculé. Si le boot a divergé (Component sauté, échec
   partiel), l'arrêt suit le fait, pas le plan.
 - Runnables d'abord, Components ensuite.
+- `ShutdownPolicy { drain, stop }` se donne au builder
+  (`KernelBuilder::shutdown_policy`) et se relit clé par clé dans l'arbre de
+  configuration que la phase 1 vient de charger
+  (`KernelBuilder::shutdown_policy_at(path)`) : les budgets sont un réglage
+  d'exploitation comme un autre. Une clé présente remplace sa moitié, une clé
+  absente laisse celle du builder, une clé présente et malformée est une erreur
+  de phase 1 — jamais un défaut que personne n'a demandé. `Kernel::policy()`
+  rend le chiffre effectivement en vigueur, avant le run.
 - `ShutdownPolicy { drain, stop }` est global mais **par unité**, pas par phase :
   ce sont les budgets qu'**une** unité reçoit, accordés à neuf quand son propre
   arrêt commence, et un descripteur ne peut que les raccourcir. Les Runnables
@@ -956,11 +988,20 @@ impl Shutdown {
   `drain + stop + (stop × components) + 2 × stop`, les deux derniers termes étant
   les attentes de `settle` (§ 10). Ce prix achète une règle — une unité n'est
   jamais abandonnée parce qu'une autre a débordé.
-- **Les Components n'ont pas d'étape `Draining`** : leur marche ouvre une seconde
-  échelle placée d'emblée en `Stopping`, rien de leur travail n'étant en vol.
-  L'échelle en deux temps est celle des Runnables — d'où un seul
-  `shutdown_timeout` sur `ComponentDescriptor` contre deux bornes sur
+- **Les Components sont prévenus du `Draining`, mais ne le traversent pas.** Ils
+  reçoivent `Component::drain` sur le premier barreau, **avant** qu'un seul
+  Runnable n'ait été prié de s'arrêter, et **en même temps** que la descente des
+  Runnables — chaque Component tenant la totalité du budget `drain`, de sorte que
+  le débordement de l'un ne raccourcit pas celui de son voisin et que la fenêtre
+  n'est pas dépensée N fois. Leur `shutdown`, lui, se déroule sur une seconde
+  échelle placée d'emblée en `Stopping` : à ce moment rien de leur travail n'est
+  en vol. D'où un seul `shutdown_timeout` sur `ComponentDescriptor` — le `drain`
+  d'un Component est borné par la politique, à plat — contre deux bornes sur
   `RunnableDescriptor`.
+- Un `drain` qui déborde ou qui échoue est enregistré, n'arrête pas la marche, et
+  compte dans le statut de sortie comme un `shutdown` qui aurait échoué : un
+  Component qui a refusé de refuser du travail neuf s'est arrêté aussi salement
+  qu'un Component qui a refusé de relâcher.
 - Dépassement du délai : la tâche est abandonnée, l'événement est enregistré, le
   Kernel continue son arrêt. **Jamais** de blocage indéfini pendant l'arrêt.
 - **L'attente qui suit `run()` n'est pas celle du Kernel.** Abandonner, c'est

@@ -4,39 +4,38 @@
 //! example:
 //!
 //! * [`Doorway`] is a [`Component`]. It owns the bound socket — it binds at
-//!   boot, publishes the address it actually got, releases at shutdown — and
-//!   it is watched by [`DoorwayProbe`].
+//!   boot, publishes the address it actually got, **shuts the door at
+//!   `Draining`** and releases at shutdown — and it is watched by
+//!   [`DoorwayProbe`].
 //! * [`Acceptor`] is a [`Runnable`]. It accepts on that socket, serves each
 //!   accepted request in its own [`Scope`], stops accepting when the ladder
 //!   reaches `Draining`, lets what it already holds finish, and cuts the rest
 //!   at `Stopping`.
 //!
-//! # Why the accept loop cannot be a component
+//! # Which half is whose
 //!
 //! This is the sentence the design document does not contain, and it is the
 //! most useful thing in this crate.
 //!
-//! A component is handed its [`ShutdownContext`] only when the kernel comes to
-//! stop it, and the kernel comes to stop components **after every runnable has
-//! already stopped**. By then the drain window is over. A component therefore
-//! never observes `Draining` at all: it observes the end, once, and nothing
-//! before it. There is no callback, no token and no stage transition a
-//! `Component` can watch, so "refuse new work now, finish held work, cut at
-//! the deadline" is a sequence a component cannot express.
+//! *Refusing new work* is a property of the RESOURCE. The socket belongs to
+//! [`Doorway`], so [`Component::drain`] — called as the ladder reaches
+//! `Draining`, before a single runnable has been asked to wind down — is where
+//! it is shut. The component does not need a loop, a token or a task to do it:
+//! it is told once, at the one instant the refusal has to start.
 //!
-//! Only a [`Runnable`] is handed a [`RunContext`], and only a `RunContext`
-//! carries the [`Shutdown`](kernel::Shutdown) token whose two rungs —
-//! `draining()` and `stopping()` — are the difference between *stop taking new
-//! work* and *stop now*. Anything that must tell those two apart is a
-//! runnable, necessarily. Not by convention, not by preference: there is no
-//! other unit that can see the ladder move.
+//! *Finishing work already in flight, and cutting what outlives the window* is
+//! a property of the LOOP, and only a [`Runnable`] can express it. Only a
+//! `RunContext` carries the [`Shutdown`](kernel::Shutdown) token whose two
+//! rungs — `draining()` and `stopping()` — are the difference between *stop
+//! taking new work* and *stop now*, and only a runnable holds the set of
+//! requests those two rungs apply to. Anything that must tell them apart over
+//! work it owns is a runnable, necessarily.
 //!
-//! What stays a component is the **resource**. A socket is opened once,
-//! ordered against the rest of the boot graph, and released once; that is
-//! exactly a component's shape and nothing about it needs the ladder. So:
-//! bind in the component, accept in the runnable. The two are wired together
-//! by the container, not by ownership — [`Acceptor`] holds an `Arc<Doorway>`
-//! and asks it to close.
+//! So: bind and shut in the component, accept and wind down in the runnable.
+//! The two are wired together by the container, not by ownership —
+//! [`Acceptor`] holds an `Arc<Doorway>` to accept on, and lets go of its own
+//! clone when the loop breaks. Neither waits on the other, and the address is
+//! unbound when the second of the two drops lands.
 //!
 //! # At `Draining` the listener is CLOSED, not merely ignored
 //!
@@ -71,6 +70,17 @@
 //! different ones. Nothing is threaded through the calls: the scope is the
 //! thread.
 //!
+//! The requirement is declared, not implicit: the bundle names `Visit` in
+//! [`Provider::requires_scoped`](kernel::Provider::requires_scoped), so phase
+//! three refuses a graph in which nobody provides it and the container's debug
+//! guard refuses a resolution nobody declared.
+//!
+//! The tasks the requests run on are [`Children`], the kernel's own per-request
+//! set: it reaps as it goes, refuses a child once the ladder has left
+//! `Running`, waits the set out across the drain window and cuts what outlives
+//! the stopping budget. That is the whole of this loop's stages two and three,
+//! so this crate hand-rolls none of it.
+//!
 //! # The wire format, in one line
 //!
 //! A line in, a line out, then the connection closes. Out is
@@ -94,14 +104,13 @@ use gateway_contracts::{Handler, HandlerError, Request, RequestId};
 use kernel::core::telemetry::{Level, Record as Diagnostic};
 use kernel::core::{ComponentError, ComponentId, Criticality, Health, HealthProbe, RunError};
 use kernel::{
-    BootContext, BoxFuture, Component, ComponentDescriptor, Extension, RestartPolicy, RunContext,
-    Runnable, RunnableDescriptor, Scope, ShutdownContext,
+    BootContext, BoxFuture, Children, Component, ComponentDescriptor, Extension, RestartPolicy,
+    RunContext, Runnable, RunnableDescriptor, Scope, ShutdownContext,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
-use tokio::task::JoinSet;
-use tokio::time::{Instant as Deadline, timeout};
+use tokio::time::timeout;
 
 /// The name the socket owner is registered and blamed under.
 pub const DOORWAY: &str = "doorway";
@@ -245,9 +254,10 @@ impl Doorway {
     /// The socket, while it is open.
     ///
     /// The [`Acceptor`] takes one clone of this and accepts on it. Closing
-    /// therefore takes two drops — the acceptor's clone and the one behind
-    /// this lock — which is why [`close`](Self::close) is called by the
-    /// acceptor *after* it has dropped its own.
+    /// therefore takes two drops — the one behind this lock, released by
+    /// [`drain`](Component::drain), and the acceptor's own, released when its
+    /// loop breaks on the same rung. Both land at `Draining`, and neither
+    /// waits on the other.
     #[must_use]
     pub fn listener(&self) -> Option<Arc<TcpListener>> {
         self.held().clone()
@@ -261,12 +271,12 @@ impl Doorway {
 
     /// Releases the socket. Idempotent.
     ///
-    /// Called twice on every clean run, and that is deliberate: the acceptor
-    /// calls it when the ladder reaches `Draining`, which is when the refusal
-    /// has to start, and [`shutdown`](Component::shutdown) calls it again as
-    /// the backstop for every path where the acceptor never ran — a graph that
-    /// failed before phase five, an acceptor that returned early, a boot that
-    /// is being rolled back.
+    /// Called twice on every clean run, and that is deliberate:
+    /// [`drain`](Component::drain) calls it when the ladder reaches
+    /// `Draining`, which is when the refusal has to start, and
+    /// [`shutdown`](Component::shutdown) calls it again as the backstop for
+    /// every path where the drain never ran — a graph that failed before phase
+    /// five, a boot that is being rolled back.
     pub fn close(&self) {
         *self.held() = None;
     }
@@ -332,14 +342,39 @@ impl Component for Doorway {
         })
     }
 
+    /// Shuts the door, at the rung where refusing new work belongs.
+    ///
+    /// Refusing new work is a property of the RESOURCE, so it is the owner of
+    /// the resource that does it. The accept loop is still running when this
+    /// returns, and everything it already accepted is still its to finish.
+    fn drain<'a>(
+        &'a self,
+        cx: &'a ShutdownContext<'a>,
+    ) -> BoxFuture<'a, Result<(), ComponentError>> {
+        Box::pin(async move {
+            // Idempotent, and cheap: dropping a listener touches the operating
+            // system once. The acceptor's own clone goes when its loop breaks
+            // on this same rung, and the address is unbound when the second of
+            // the two drops lands.
+            self.close();
+            cx.telemetry()
+                .record(Diagnostic::new(Level::Info, "gateway.door_shut").with(
+                    "bound",
+                    self.address().map_or_else(String::new, |a| a.to_string()),
+                ));
+            Ok(())
+        })
+    }
+
     fn shutdown<'a>(
         &'a self,
         _cx: &'a ShutdownContext<'a>,
     ) -> BoxFuture<'a, Result<(), ComponentError>> {
         Box::pin(async move {
-            // Almost always a no-op: on a clean run the acceptor closed the
-            // socket a whole drain window ago, because that is where the
-            // refusal had to start. What is left here is the backstop.
+            // Almost always a no-op: on a clean run `drain` closed the socket a
+            // whole drain window ago, because that is where the refusal had to
+            // start. What is left here is the backstop for the paths that never
+            // reached a drain at all.
             self.close();
             Ok(())
         })
@@ -561,10 +596,12 @@ impl Acceptor {
             return Err(RunError::failed(cx.id(), Box::new(NotOpen)));
         };
 
-        // Every accepted request runs as its own task, and the set is what
-        // makes both the window and the cut expressible: the window is
-        // "reap until empty", the cut is `shutdown`.
-        let mut serving: JoinSet<()> = JoinSet::new();
+        // Every accepted request runs as its own task. `Children` is the
+        // kernel's own per-request task facility: it reaps as it goes, refuses
+        // a child once the ladder has left `Running`, and knows how to wait the
+        // set out under the two rungs — which is the whole of stages two and
+        // three below.
+        let mut serving = Children::new(cx.shutdown().clone());
         let mut numbered: u64 = 0;
         let mut failures: u32 = 0;
 
@@ -581,18 +618,16 @@ impl Acceptor {
                 // new work. This is the branch a component could never have.
                 () = cx.shutdown().draining() => break,
 
-                // Finished conversations are reaped as they end, so the set
-                // never grows with the number of requests served.
-                joined = serving.join_next(), if !serving.is_empty() => {
-                    drop(joined);
-                }
-
                 accepted = listener.accept() => match accepted {
                     Ok((stream, _)) => {
                         failures = 0;
                         numbered += 1;
                         self.tally.accepted.fetch_add(1, Ordering::Relaxed);
-                        serving.spawn(Arc::clone(&self).converse(
+                        // Refused only if the ladder moved between the biased
+                        // branch above and here, which is the answer this loop
+                        // wants: the connection is dropped unanswered because
+                        // the door is already shut behind it.
+                        let _ = serving.spawn(Arc::clone(&self).converse(
                             cx.clone(),
                             stream,
                             RequestId::new(numbered),
@@ -613,51 +648,35 @@ impl Acceptor {
             }
         }
 
-        // ---- Stage two: refuse, and finish what is held ------------------
+        // ---- Stage two: let go of the socket -----------------------------
         //
-        // Both clones go: the one this loop accepted on, then the one the
-        // component holds. The socket is unbound when the second drop lands,
-        // and a caller connecting from here on is refused by the operating
-        // system rather than left waiting on a process that is leaving.
+        // Only this loop's own clone. The one the component holds is released
+        // by `Doorway::drain`, which the kernel calls on this same rung — the
+        // door is the component's resource, and shutting it is the component's
+        // business. The address is unbound when the second of the two drops
+        // lands, and a caller connecting from then on is refused by the
+        // operating system rather than left waiting on a process that is
+        // leaving.
         drop(listener);
-        self.doorway.close();
         cx.telemetry().record(
-            Diagnostic::new(Level::Info, "gateway.draining")
-                .with("in_flight", count(serving.len())),
+            Diagnostic::new(Level::Info, "gateway.draining").with("in_flight", serving.len()),
         );
 
-        // The window. Nothing is cancelled here — that is the entire point of
-        // there being two rungs instead of one.
-        tokio::select! {
-            () = reap(&mut serving) => {}
-            () = cx.shutdown().stopping() => {}
-        }
-
-        // ---- Stage three: cut -------------------------------------------
+        // ---- Stage three: the window, then the cut -----------------------
+        //
+        // Nothing is cancelled while the ladder is at `Draining` — that is the
+        // entire point of there being two rungs instead of one. At `Stopping`
+        // the same wait runs against the stage's own deadline, and whatever
+        // ignores both is aborted. The budget is the ladder's throughout: a
+        // bound this loop invented would be a second deadline nobody
+        // configured, racing the one the supervisor is already enforcing.
         //
         // Each conversation races `stopping` itself and writes one last line,
-        // so what is left is given the stopping stage's own budget to say so
-        // and nothing more. The budget is read from the ladder rather than
-        // invented here: a bound this loop made up would be a second deadline
-        // nobody configured, racing the one the supervisor is already
-        // enforcing.
-        if let Some(end) = cx.shutdown().deadline() {
-            tokio::select! {
-                () = reap(&mut serving) => {}
-                () = tokio::time::sleep_until(Deadline::from_std(end)) => {}
-            }
-        }
-
-        // Whatever ignored both is aborted. An abort is only observed at an
-        // await point, so a task that refuses to yield outlives even this —
-        // and the bound on *that* belongs to the caller's runtime, which is
-        // why both `main`s in this repository end on `shutdown_timeout`.
-        let abandoned = serving.len();
-        serving.shutdown().await;
+        // so a cut caller is told rather than reset.
+        let abandoned = serving.finish().await;
         if abandoned > 0 {
-            cx.telemetry().record(
-                Diagnostic::new(Level::Warn, "gateway.cut").with("abandoned", count(abandoned)),
-            );
+            cx.telemetry()
+                .record(Diagnostic::new(Level::Warn, "gateway.cut").with("abandoned", abandoned));
         }
 
         Ok(())
@@ -791,25 +810,6 @@ impl Runnable for Acceptor {
     }
 }
 
-/// A count as a telemetry field.
-///
-/// [`FieldValue`](kernel::core::telemetry::FieldValue) is built from `i64` and
-/// `u32` and from no wider unsigned type, so every count crossing into a
-/// record is narrowed here, once, and saturates rather than wrapping.
-fn count(value: usize) -> i64 {
-    i64::try_from(value).unwrap_or(i64::MAX)
-}
-
-/// Reaps until the set is empty, then resolves.
-///
-/// Pulled out because it is used twice with two different things racing it:
-/// the drain window races it against `stopping`, and the cut races it against
-/// the stage deadline. `join_next` is cancel-safe, so losing either race
-/// leaves the set intact.
-async fn reap(serving: &mut JoinSet<()>) {
-    while serving.join_next().await.is_some() {}
-}
-
 /// The visit of the unit of work `scope` stands for.
 ///
 /// `None` is a real finding and it is recorded — a scoped binding that cannot
@@ -866,6 +866,7 @@ mod tests {
     use kernel::ShutdownController;
     use tokio::io::AsyncWriteExt;
     use tokio::sync::Notify;
+    use tokio::time::Instant as Deadline;
 
     use super::*;
 
@@ -981,6 +982,21 @@ mod tests {
         false
     }
 
+    /// The drain rung, exactly as the kernel walks it.
+    ///
+    /// Two things happen on it and neither is the other's: the ladder moves,
+    /// and every component is told to refuse new work. The acceptor watches
+    /// the first; the door is shut by the second. A test that moved only the
+    /// ladder would be testing half a rung.
+    async fn drain_rung(doorway: &Doorway, controller: &ShutdownController) {
+        controller.begin_draining();
+        let (detached, _stopping) = ShutdownContext::detached();
+        doorway
+            .drain(&detached.context())
+            .await
+            .expect("shutting the door cannot fail");
+    }
+
     /// An acceptor over `doorway`, and the context that drives its ladder.
     fn acceptor(
         doorway: &Arc<Doorway>,
@@ -1038,9 +1054,13 @@ mod tests {
         doorway.boot(&detached.context()).await.expect("it binds");
         assert_eq!(probe.check().await, Health::Up);
 
-        // Down the instant the door closes, which is a whole drain window
-        // before the process stops. That is what makes it useful.
-        doorway.close();
+        // Down the instant the drain rung shuts the door, which is a whole
+        // drain window before the process stops. That is what makes it useful.
+        let (stopping, _controller) = ShutdownContext::detached();
+        doorway
+            .drain(&stopping.context())
+            .await
+            .expect("shutting the door cannot fail");
         assert!(matches!(probe.check().await, Health::Down { .. }));
     }
 
@@ -1065,7 +1085,7 @@ mod tests {
         // is about; the numbered label is proved where a real graph exists.
         assert_eq!(ask(address, "work").await, "1 - - ok work");
 
-        controller.begin_draining();
+        drain_rung(&doorway, &controller).await;
         let outcome = timeout(BOUND, running)
             .await
             .expect("the loop returns at drain")
@@ -1096,8 +1116,8 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
 
-        // The ladder moves under a request that is already in flight.
-        controller.begin_draining();
+        // The rung is walked under a request that is already in flight.
+        drain_rung(&doorway, &controller).await;
         assert!(refuses(address).await, "refusing starts at once");
 
         // And the held request still finishes, with a real answer.
@@ -1128,7 +1148,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
 
-        controller.begin_draining();
+        drain_rung(&doorway, &controller).await;
         controller.begin_stopping();
 
         // What the cut costs, and what it does not: the request never
@@ -1174,7 +1194,7 @@ mod tests {
             .expect("the answer is read");
         assert_eq!(answer.trim_end(), "1 - - timeout");
 
-        controller.begin_draining();
+        drain_rung(&doorway, &controller).await;
         let outcome = timeout(BOUND, running)
             .await
             .expect("the loop returns")

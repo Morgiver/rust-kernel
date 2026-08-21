@@ -12,6 +12,7 @@
 use core::fmt;
 use std::process::ExitCode;
 
+use crate::descriptor::Lifetime;
 use crate::id::{ComponentId, ContractRef, ExtensionId, RunnableId};
 
 /// A foreign error, type-erased.
@@ -346,6 +347,21 @@ impl RunError {
     pub fn kind(&self) -> &RunErrorKind {
         &self.kind
     }
+
+    /// Why the work was cut short, when it was.
+    ///
+    /// Recognises an [`Aborted`] reported by the runnable itself, however deep
+    /// it sits in the failure it returned, and reads the kernel's own two
+    /// endings as the reasons they are. A panic has no reason: it is a defect,
+    /// not a stop.
+    pub fn abort_reason(&self) -> Option<AbortReason> {
+        match &self.kind {
+            RunErrorKind::Failed(source) => Aborted::find(&**source).map(Aborted::reason),
+            RunErrorKind::Cancelled => Some(AbortReason::ShutdownRequested),
+            RunErrorKind::DeadlineExceeded => Some(AbortReason::DeadlineExceeded),
+            RunErrorKind::Panicked(_) => None,
+        }
+    }
 }
 
 impl fmt::Display for RunError {
@@ -416,6 +432,17 @@ impl ShutdownError {
     pub fn kind(&self) -> &ShutdownErrorKind {
         &self.kind
     }
+
+    /// Why the work was cut short, when it was.
+    ///
+    /// Same recognition as [`RunError::abort_reason`]: an [`Aborted`] the unit
+    /// reported is found wherever it sits in the failure it returned.
+    pub fn abort_reason(&self) -> Option<AbortReason> {
+        match &self.kind {
+            ShutdownErrorKind::Failed(source) => Aborted::find(&**source).map(Aborted::reason),
+            ShutdownErrorKind::DeadlineExceeded => Some(AbortReason::DeadlineExceeded),
+        }
+    }
 }
 
 impl fmt::Display for ShutdownError {
@@ -429,6 +456,128 @@ impl std::error::Error for ShutdownError {
         match &self.kind {
             ShutdownErrorKind::Failed(source) => Some(&**source),
             ShutdownErrorKind::DeadlineExceeded => None,
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
+// Work cut short
+// --------------------------------------------------------------------------
+
+/// Why work in flight ended before it was done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AbortReason {
+    /// A stop was asked for and the work was let go before its budget ran out.
+    ShutdownRequested,
+    /// The budget allowed for stopping elapsed while the work was still
+    /// running.
+    DeadlineExceeded,
+}
+
+impl AbortReason {
+    /// Stable snake-case name, e.g. `"deadline_exceeded"`, for a telemetry
+    /// field or a comparison.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ShutdownRequested => "shutdown_requested",
+            Self::DeadlineExceeded => "deadline_exceeded",
+        }
+    }
+}
+
+impl fmt::Display for AbortReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::ShutdownRequested => "shutdown requested",
+            Self::DeadlineExceeded => "deadline exceeded",
+        })
+    }
+}
+
+/// Work the stop cut short.
+///
+/// [`RunError`] and [`ShutdownError`] blame a unit the kernel owns. Work an
+/// application had in flight when the stop ladder cut it belongs to no such
+/// unit, so it had no word here and every caller invented its own — which two
+/// callers cannot agree on. This is that word: a cause and nothing else, no
+/// unit, no payload, no domain.
+///
+/// It is a plain [`Error`](std::error::Error), so it boxes into a
+/// [`BoxSource`] like any other failure, and the kernel recognises it again
+/// through [`RunError::abort_reason`] and [`ShutdownError::abort_reason`] even
+/// when the application wrapped it in a failure of its own.
+///
+/// ```
+/// use kernel_core::error::{AbortReason, Aborted, BoxSource, RunError};
+/// use kernel_core::id::RunnableId;
+///
+/// let source: BoxSource = Box::new(Aborted::deadline_exceeded());
+/// let error = RunError::failed(RunnableId::new("alpha", 0), source);
+/// assert_eq!(error.abort_reason(), Some(AbortReason::DeadlineExceeded));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Aborted {
+    reason: AbortReason,
+}
+
+impl Aborted {
+    /// Work cut short for this reason.
+    pub const fn new(reason: AbortReason) -> Self {
+        Self { reason }
+    }
+
+    /// The work was let go because a stop was asked for.
+    pub const fn shutdown_requested() -> Self {
+        Self::new(AbortReason::ShutdownRequested)
+    }
+
+    /// The work outlived the budget allowed for stopping.
+    pub const fn deadline_exceeded() -> Self {
+        Self::new(AbortReason::DeadlineExceeded)
+    }
+
+    /// Why it was cut short.
+    pub const fn reason(self) -> AbortReason {
+        self.reason
+    }
+
+    /// Finds an [`Aborted`] in an error or anywhere in its chain of sources.
+    ///
+    /// This is how the kernel recognises a cause an application reported
+    /// through a failure of its own.
+    pub fn find(error: &(dyn std::error::Error + 'static)) -> Option<Self> {
+        let mut current = Some(error);
+        while let Some(error) = current {
+            if let Some(aborted) = error.downcast_ref::<Self>() {
+                return Some(*aborted);
+            }
+            current = error.source();
+        }
+        None
+    }
+}
+
+impl fmt::Display for Aborted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "work cut short: {}", self.reason)
+    }
+}
+
+impl std::error::Error for Aborted {}
+
+impl From<AbortReason> for Aborted {
+    fn from(reason: AbortReason) -> Self {
+        Self::new(reason)
+    }
+}
+
+/// Reads an abort as the ending it is, so a runnable that reports one is not
+/// blamed for a failure of its own.
+impl From<Aborted> for RunErrorKind {
+    fn from(aborted: Aborted) -> Self {
+        match aborted.reason() {
+            AbortReason::ShutdownRequested => RunErrorKind::Cancelled,
+            AbortReason::DeadlineExceeded => RunErrorKind::DeadlineExceeded,
         }
     }
 }
@@ -636,6 +785,31 @@ pub enum ResolveError {
         /// The bundle that registered the requirer.
         bundle: &'static str,
     },
+    /// A contract a unit resolves inside its own scope is not bound `Scoped`.
+    ///
+    /// A unit that opens a scope per unit of work declares what it resolves
+    /// there, and every contract in that declaration must be bound
+    /// [`Lifetime::Scoped`]. A `Shared` binding is built once for the whole
+    /// process, so every unit of work would receive the same value — the scope
+    /// buys nothing, and the isolation it was opened for is not there. A
+    /// `Factory` binding is rebuilt on every resolution, so two resolutions
+    /// inside one unit of work would not agree either.
+    ///
+    /// The counterpart of [`LifetimeConflict`](Self::LifetimeConflict): that
+    /// one catches a requirer reaching a scoped binding it can never build,
+    /// this one catches a unit of work reaching a binding that is not scoped at
+    /// all.
+    ScopeMismatch {
+        /// What states the requirement, named as
+        /// [`LifetimeConflict`](Self::LifetimeConflict) names it.
+        required_by: &'static str,
+        /// The contract it resolves inside its scope.
+        requires: ContractRef,
+        /// The lifetime that contract is actually bound under.
+        lifetime: Lifetime,
+        /// The bundle that registered the requirer.
+        bundle: &'static str,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -719,6 +893,19 @@ impl fmt::Display for ResolveError {
                 write!(f, "`{required_by}` is not scoped and requires scoped ")?;
                 write_contract(f, requires)?;
                 write!(f, ", declared by `{bundle}`")
+            }
+            Self::ScopeMismatch {
+                required_by,
+                requires,
+                lifetime,
+                bundle,
+            } => {
+                write!(f, "`{required_by}` resolves ")?;
+                write_contract(f, requires)?;
+                write!(
+                    f,
+                    " in a scope, but it is bound {lifetime}, declared by `{bundle}`"
+                )
             }
         }
     }
@@ -1121,6 +1308,110 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("#primary"));
         assert!(rendered.contains("alpha"));
+    }
+
+    #[test]
+    fn abort_reason_renders() {
+        assert_eq!(AbortReason::DeadlineExceeded.as_str(), "deadline_exceeded");
+        assert_eq!(
+            AbortReason::ShutdownRequested.as_str(),
+            "shutdown_requested"
+        );
+        assert_eq!(
+            Aborted::shutdown_requested().to_string(),
+            "work cut short: shutdown requested"
+        );
+        assert_eq!(
+            Aborted::from(AbortReason::DeadlineExceeded),
+            Aborted::deadline_exceeded()
+        );
+        assert_eq!(
+            Aborted::deadline_exceeded().reason(),
+            AbortReason::DeadlineExceeded
+        );
+    }
+
+    #[derive(Debug)]
+    struct Wrapper(Aborted);
+
+    impl fmt::Display for Wrapper {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "unit of work failed: {}", self.0)
+        }
+    }
+
+    impl std::error::Error for Wrapper {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn finds_abort_in_chain() {
+        let wrapped = Wrapper(Aborted::shutdown_requested());
+        assert_eq!(Aborted::find(&wrapped), Some(Aborted::shutdown_requested()));
+
+        let direct = Aborted::deadline_exceeded();
+        assert_eq!(Aborted::find(&direct), Some(direct));
+        assert_eq!(Aborted::find(&*boxed("unrelated")), None);
+    }
+
+    #[test]
+    fn run_error_reads_abort() {
+        let alpha = RunnableId::new("alpha", 0);
+        let wrapped: BoxSource = Box::new(Wrapper(Aborted::shutdown_requested()));
+        assert_eq!(
+            RunError::failed(alpha, wrapped).abort_reason(),
+            Some(AbortReason::ShutdownRequested)
+        );
+        assert_eq!(
+            RunError::failed(alpha, Box::new(Aborted::deadline_exceeded())).abort_reason(),
+            Some(AbortReason::DeadlineExceeded)
+        );
+        assert_eq!(
+            RunError::cancelled(alpha).abort_reason(),
+            Some(AbortReason::ShutdownRequested)
+        );
+        assert_eq!(
+            RunError::deadline_exceeded(alpha).abort_reason(),
+            Some(AbortReason::DeadlineExceeded)
+        );
+        assert_eq!(RunError::panicked(alpha, "boom").abort_reason(), None);
+        assert_eq!(RunError::failed(alpha, boxed("disk")).abort_reason(), None);
+    }
+
+    #[test]
+    fn shutdown_error_reads_abort() {
+        let wrapped: BoxSource = Box::new(Wrapper(Aborted::deadline_exceeded()));
+        assert_eq!(
+            ShutdownError::failed("alpha", wrapped).abort_reason(),
+            Some(AbortReason::DeadlineExceeded)
+        );
+        assert_eq!(
+            ShutdownError::deadline_exceeded("alpha").abort_reason(),
+            Some(AbortReason::DeadlineExceeded)
+        );
+        assert_eq!(
+            ShutdownError::failed("alpha", boxed("disk")).abort_reason(),
+            None
+        );
+    }
+
+    #[test]
+    fn abort_maps_to_kind() {
+        assert!(matches!(
+            RunErrorKind::from(Aborted::shutdown_requested()),
+            RunErrorKind::Cancelled
+        ));
+        assert!(matches!(
+            RunErrorKind::from(Aborted::deadline_exceeded()),
+            RunErrorKind::DeadlineExceeded
+        ));
+        let error = RunError::new(
+            RunnableId::new("alpha", 0),
+            Aborted::deadline_exceeded().into(),
+        );
+        assert!(error.to_string().ends_with("deadline exceeded"));
     }
 
     #[test]

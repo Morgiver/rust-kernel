@@ -40,6 +40,6 @@ pub mod missing;
 pub use kernel::FnBundle;
 
 pub use doubles::{Call, LifecycleLog, Parking, Recorder};
-pub use harness::{TestBuilder, TestHarness};
+pub use harness::{Ended, RecordMatch, Registered, TestBuilder, TestHarness, container};
 pub use log::EventLog;
 pub use missing::{missing_contracts, missing_contracts_with};

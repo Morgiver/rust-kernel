@@ -46,14 +46,14 @@ pub use events::{
 };
 pub use extension::ExtensionPoints;
 pub use health::{HealthReport, PROBE_TIMEOUT, Probe, aggregate};
-pub use kernel::{Kernel, KernelBuilder};
+pub use kernel::{Ending, Kernel, KernelBuilder};
 pub use provider::{Binding, BuildFn, Provider};
 pub use registry::{Listening, Registry};
-pub use runnable::{RunBuilder, RunContext, Runnable};
-pub use shutdown::{KernelHandle, Shutdown, ShutdownController, Tick};
+pub use runnable::{Children, RunBuilder, RunContext, Runnable, Spawned};
+pub use shutdown::{Budget, KernelHandle, Shutdown, ShutdownController, Tick};
 
 pub use kernel_core::{
-    BoxFuture, BundleManifest, ComponentDescriptor, ContractRef, Criticality, Event, Extension,
-    Flow, Lifetime, Outcome, Priority, RestartPolicy, RunnableDescriptor, ShutdownPolicy, Stage,
-    Telemetry,
+    AbortReason, Aborted, BoxFuture, BundleManifest, ComponentDescriptor, ContractRef, Criticality,
+    Event, Extension, Flow, Lifetime, Outcome, Priority, RestartPolicy, RunnableDescriptor,
+    ShutdownPolicy, Stage, Telemetry,
 };

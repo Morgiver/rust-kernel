@@ -24,13 +24,13 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use kernel_core::{
-    ConfigSource, ContractId, KernelError, Level, NoopTelemetry, Outcome, Record, RunError,
-    RunErrorKind, RunnableId, ShutdownError, ShutdownPolicy, Telemetry,
+    ConfigError, ConfigSource, ConfigTree, ContractId, KernelError, Level, NoopTelemetry, Outcome,
+    Record, RunError, RunErrorKind, RunnableId, ShutdownError, ShutdownPolicy, Telemetry,
 };
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-use crate::boot::{Booted, RolledBack, boot, rollback};
+use crate::boot::{Booted, RolledBack, boot, drain, rollback};
 use crate::bundle::Bundle;
 use crate::component::ShutdownContext;
 use crate::config::ConfigChain;
@@ -104,6 +104,8 @@ pub struct KernelBuilder {
     telemetry: Arc<dyn Telemetry>,
     /// The drain and stop budgets phase six runs on.
     policy: ShutdownPolicy,
+    /// Where in the loaded tree the budgets are read from, when they are.
+    policy_path: Option<String>,
     /// Whether the kernel installs its own stop-signal handler.
     capture_signals: bool,
     /// Ran after every bundle has registered and before phase three.
@@ -132,6 +134,7 @@ impl KernelBuilder {
             bundles: Vec::new(),
             telemetry: Arc::new(NoopTelemetry),
             policy: ShutdownPolicy::DEFAULT,
+            policy_path: None,
             capture_signals: true,
             #[cfg(feature = "testing")]
             hook: None,
@@ -169,9 +172,57 @@ impl KernelBuilder {
     }
 
     /// The drain and stop budgets. A descriptor may shorten them per unit.
+    ///
+    /// What this sets is the DEFAULT: it is what
+    /// [`shutdown_policy_at`](Self::shutdown_policy_at) falls back to, key by
+    /// key, for anything the configuration does not name.
     #[must_use]
     pub fn shutdown_policy(mut self, policy: ShutdownPolicy) -> Self {
         self.policy = policy;
+        self
+    }
+
+    /// Reads the drain and stop budgets from the configuration, at `path`.
+    ///
+    /// The budgets are an operational setting like any other, and an
+    /// application that wants them configurable had no way to say so: `build`
+    /// loads the configuration tree itself, so a policy handed to the builder
+    /// is fixed before a single source has been read, and the only way out was
+    /// to build a second [`ConfigChain`] over the same sources and load them
+    /// twice. This reads the tree `build` already loaded.
+    ///
+    /// The node at `path` is read as a map with two optional fields, `drain`
+    /// and `stop`, each a [`Duration`] — a plain number of seconds, or a
+    /// suffixed string such as `"30s"` or `"2m"`. Each one found replaces its
+    /// half of [`shutdown_policy`](Self::shutdown_policy); each one absent
+    /// leaves it, and an absent `path` leaves both. A value that is present and
+    /// malformed is a configuration error, reported by `build` as
+    /// [`KernelError::Config`] with the rest of phase one — not silently
+    /// swallowed for a default.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use core::time::Duration;
+    /// # use kernel::{Kernel, MemorySource};
+    /// # use kernel::core::{ConfigNode, ConfigTree};
+    /// # async fn probe() {
+    /// let mut tree = ConfigTree::empty();
+    /// tree.insert("kernel.shutdown.drain", ConfigNode::from("2s")).expect("insert");
+    ///
+    /// let kernel = Kernel::builder()
+    ///     .config_source(MemorySource::new(tree))
+    ///     .shutdown_policy_at("kernel.shutdown")
+    ///     .build()
+    ///     .await
+    ///     .expect("a graph");
+    ///
+    /// assert_eq!(kernel.policy().drain, Duration::from_secs(2));
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn shutdown_policy_at(mut self, path: impl Into<String>) -> Self {
+        self.policy_path = Some(path.into());
         self
     }
 
@@ -209,8 +260,23 @@ impl KernelBuilder {
                 ));
             }
         };
+        // Still phase one: budgets read out of the tree are configuration, and
+        // a malformed one is a configuration failure like any other.
+        let policy = match policy_at(&tree, self.policy, self.policy_path.as_deref()) {
+            Ok(policy) => policy,
+            Err(error) => {
+                return Err(refused(
+                    &telemetry,
+                    "configure",
+                    KernelError::Config(vec![error]),
+                ));
+            }
+        };
         telemetry.record(
-            Record::new(Level::Info, CONFIGURED).with("sources", count(self.sources.len())),
+            Record::new(Level::Info, CONFIGURED)
+                .with("sources", self.sources.len())
+                .with("drain", policy.drain)
+                .with("stop", policy.stop),
         );
 
         // Phase two.
@@ -246,8 +312,7 @@ impl KernelBuilder {
             registry.enter_bundle("<substituted>");
             hook(&mut registry);
         }
-        telemetry
-            .record(Record::new(Level::Info, REGISTERED).with("bundles", count(manifests.len())));
+        telemetry.record(Record::new(Level::Info, REGISTERED).with("bundles", manifests.len()));
 
         // Phase three.
         let resolved = match resolve(registry, &manifests) {
@@ -258,8 +323,8 @@ impl KernelBuilder {
         };
         telemetry.record(
             Record::new(Level::Info, RESOLVED)
-                .with("components", count(resolved.plan.components.len()))
-                .with("runnables", count(resolved.plan.runnables.len())),
+                .with("components", resolved.plan.components.len())
+                .with("runnables", resolved.plan.runnables.len()),
         );
 
         // Phase two's notifications, published at the first moment a listener
@@ -277,7 +342,7 @@ impl KernelBuilder {
 
         Ok(Kernel {
             resolved,
-            policy: self.policy,
+            policy,
             capture_signals: self.capture_signals,
         })
     }
@@ -298,6 +363,7 @@ impl fmt::Debug for KernelBuilder {
             .field("sources", &self.sources.len())
             .field("bundles", &self.bundles.len())
             .field("policy", &self.policy)
+            .field("policy_path", &self.policy_path)
             .field("capture_signals", &self.capture_signals)
             .finish_non_exhaustive()
     }
@@ -353,12 +419,67 @@ impl Kernel {
     /// Nothing is built yet: resolving through it here builds the value early,
     /// which is exactly what phase four is for. Reach in to read the
     /// configuration or the telemetry sink, not to pre-build the graph.
+    ///
+    /// # Reading a component AFTER it has booted takes a clone, taken BEFORE
+    ///
+    /// [`run`](Self::run) consumes the kernel, so this borrow does not survive
+    /// the run and there is no second chance to take one. A caller that needs
+    /// to read something a component only knows once it has booted — a bound a
+    /// resource negotiated, a capacity it settled on — clones the container
+    /// here and keeps the clone:
+    ///
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # trait Probing: Send + Sync + 'static { fn reading(&self) -> u32; }
+    /// # async fn probe(kernel: kernel::Kernel) {
+    /// // Before the run: nothing is built, and this resolves nothing.
+    /// let container = kernel.container().clone();
+    /// let handle = kernel.handle();
+    /// let running = tokio::spawn(kernel.run());
+    ///
+    /// // After boot: the clone reads the very values phase four built, because
+    /// // every clone of a container shares one table.
+    /// let unit: Arc<dyn Probing> = container.get().await.expect("bound");
+    /// let _ = unit.reading();
+    ///
+    /// handle.shutdown();
+    /// let _ = running.await;
+    /// # }
+    /// ```
+    ///
+    /// The clone is not a copy of the graph: every clone shares one table of
+    /// values, so what the run builds is what the clone resolves. What it does
+    /// NOT give is a second chance to change the graph — the table is fixed by
+    /// phase three and sealed by phase four, which is the property that makes
+    /// handing a clone out safe.
     #[must_use]
     pub fn container(&self) -> &Container {
         &self.resolved.container
     }
 
+    /// The budgets phase six will run on, after the configuration has had its
+    /// say.
+    ///
+    /// What [`KernelBuilder::shutdown_policy_at`] resolved to, which is the
+    /// only place the figure actually in force can be read before the run.
+    #[must_use]
+    pub fn policy(&self) -> ShutdownPolicy {
+        self.policy
+    }
+
     /// Runs phases four to seven.
+    ///
+    /// # Whatever the caller needs from the graph, it takes BEFORE this
+    ///
+    /// This consumes the kernel: the handle, the dispatcher and the container
+    /// are reachable up to the call and not after it. That is deliberate — it
+    /// is what makes the graph immutable once it is running — and it means the
+    /// sequencing is the caller's to get right. [`handle`](Self::handle) is
+    /// taken before the run for the caller that wants to stop it,
+    /// [`container`](Self::container) is CLONED before the run for the caller
+    /// that wants to read a component once it has booted, and
+    /// [`dispatcher`](Self::dispatcher) likewise. There is no accessor that
+    /// works afterwards, because after this returns there is no kernel.
     ///
     /// # What the shutdown budget costs at worst
     ///
@@ -372,6 +493,11 @@ impl Kernel {
     /// The shutdown request is dispatched before either half, and that wait is
     /// capped at `drain`: it is where the drain begins, and an awaited dispatch
     /// hands a listener the whole process until it returns.
+    ///
+    /// The components' own [`drain`](crate::Component::drain) costs nothing on
+    /// top: every component is told at once, the whole walk is capped at
+    /// `drain`, and it runs CONCURRENTLY with the runnables' wind-down, which
+    /// already costs `drain + stop`.
     ///
     /// The detached emissions are awaited twice — once before the components
     /// go down, once after the last event of the run — and each wait is capped
@@ -430,6 +556,42 @@ impl Kernel {
     /// `crates/kernel/tests/exit.rs` holds the bound against a runnable built
     /// to defeat everything except it.
     pub async fn run(self) -> Outcome {
+        self.ran().await.into_outcome()
+    }
+
+    /// The same run, reporting what phase five recorded alongside the outcome.
+    ///
+    /// [`run`](Self::run) answers the question `main` asks — did this end
+    /// well — and an [`Outcome`] is the whole of that answer. It is not the
+    /// whole of what happened: a stop that was asked for and honoured is a
+    /// success whatever went wrong on the way out, so
+    /// [`Outcome::ShutdownRequested`] carries nothing, and the runnable that
+    /// had to be abandoned at the stop budget vanished with it. That failure
+    /// reached the telemetry stream and the [`Stopped`] event and died on the
+    /// way to the caller.
+    ///
+    /// This is that information, kept: the outcome as `run` reports it, plus
+    /// every abnormal ending of phase five the outcome does not itself name.
+    /// It does not turn a requested stop into a failure — the outcome is
+    /// unchanged — it makes what happened readable.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use kernel::core::RunErrorKind;
+    /// # async fn probe(kernel: kernel::Kernel) {
+    /// let ending = kernel.ran().await;
+    ///
+    /// // The stop was honoured, and a runnable still had to be cut for it.
+    /// assert!(ending.is_success());
+    /// for error in ending.errors() {
+    ///     if matches!(error.kind(), RunErrorKind::DeadlineExceeded) {
+    ///         eprintln!("abandoned: {}", error.runnable().name());
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    pub async fn ran(self) -> Ending {
         // Armed before the task is spawned, so a drop between the two still
         // reaches the kernel: the handle is the same object the driver watches.
         let mut stopper = StopOnDrop(Some(self.handle()));
@@ -441,14 +603,83 @@ impl Kernel {
         stopper.disarm();
 
         match ended {
-            Ok(outcome) => outcome,
+            Ok(ending) => ending,
             // The driver itself came apart. Nothing else can report it, so it
             // is reported here rather than propagated as an unwind.
-            Err(join) => Outcome::Failed(KernelError::Shutdown(vec![ShutdownError::failed(
-                KERNEL,
-                join.to_string().into(),
-            )])),
+            Err(join) => Ending {
+                outcome: Outcome::Failed(KernelError::Shutdown(vec![ShutdownError::failed(
+                    KERNEL,
+                    join.to_string().into(),
+                )])),
+                errors: Vec::new(),
+            },
         }
+    }
+}
+
+/// How a run ended, with the failures the outcome does not itself carry.
+///
+/// What [`Kernel::ran`] answers with. [`Outcome`] is a verdict — it says
+/// whether the process should exit zero — and a verdict is deliberately narrow:
+/// a stop that was asked for and honoured is a success, so the ending that
+/// reports it carries no failure list at all. The failures still happened. A
+/// runnable that ignored its token and was cut at the stop budget produced a
+/// [`RunErrorKind::DeadlineExceeded`], and an ancillary one that failed and was
+/// restarted produced another; both are the operator's business and neither is
+/// grounds for failing the run.
+///
+/// [`errors`](Self::errors) is where they are: every abnormal ending of phase
+/// five, in the order it was seen, MINUS the ones the outcome already names.
+/// A failed run keeps its cause where a caller already looks for it — inside
+/// [`Outcome::Failed`] — and nothing is reported twice.
+pub struct Ending {
+    /// The verdict, exactly as [`Kernel::run`] reports it.
+    outcome: Outcome,
+    /// Every abnormal ending of phase five the outcome does not name.
+    errors: Vec<RunError>,
+}
+
+impl Ending {
+    /// The verdict.
+    #[must_use]
+    pub fn outcome(&self) -> &Outcome {
+        &self.outcome
+    }
+
+    /// Every abnormal ending of phase five the outcome does not itself carry.
+    ///
+    /// Empty on a run where nothing went wrong. Non-empty on a run that ended
+    /// exactly as asked and had to abandon a task to do it.
+    #[must_use]
+    pub fn errors(&self) -> &[RunError] {
+        &self.errors
+    }
+
+    /// Whether the run ended without failure. Reads the outcome.
+    #[must_use]
+    pub fn is_success(&self) -> bool {
+        self.outcome.is_success()
+    }
+
+    /// The verdict alone, for a caller that is done with the failures.
+    #[must_use]
+    pub fn into_outcome(self) -> Outcome {
+        self.outcome
+    }
+
+    /// Both halves, owned.
+    #[must_use]
+    pub fn into_parts(self) -> (Outcome, Vec<RunError>) {
+        (self.outcome, self.errors)
+    }
+}
+
+impl fmt::Debug for Ending {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Ending")
+            .field("outcome", &self.outcome)
+            .field("errors", &self.errors.len())
+            .finish()
     }
 }
 
@@ -485,11 +716,11 @@ impl Drop for StopOnDrop {
     }
 }
 
-/// Phases four to seven, from a boot to an [`Outcome`].
+/// Phases four to seven, from a boot to an [`Ending`].
 ///
 /// Owns everything it needs, so that it can be spawned and outlive the future
 /// that awaited it.
-async fn drive(kernel: Kernel) -> Outcome {
+async fn drive(kernel: Kernel) -> Ending {
     let Kernel {
         resolved,
         policy,
@@ -504,11 +735,14 @@ async fn drive(kernel: Kernel) -> Outcome {
     let booted = match boot(&resolved, policy).await {
         Ok(booted) => booted,
         Err(failure) => {
-            return Outcome::Failed(KernelError::Boot {
-                component: failure.component,
-                source: failure.source,
-                rolled_back: failure.rolled_back,
-            });
+            return Ending {
+                outcome: Outcome::Failed(KernelError::Boot {
+                    component: failure.component,
+                    source: failure.source,
+                    rolled_back: failure.rolled_back,
+                }),
+                errors: Vec::new(),
+            };
         }
     };
 
@@ -516,6 +750,11 @@ async fn drive(kernel: Kernel) -> Outcome {
     // handler moves it from a task of its own.
     let (controller, shutdown) = ShutdownController::new(policy);
     let controller = Arc::new(controller);
+    // Bound here rather than at the first runnable's start: a unit holding
+    // nothing but the handle reads the true stage from phase four onwards,
+    // including in a graph with no runnable at all. Binding is first-wins, so
+    // the second ladder the component walk opens below cannot redefine it.
+    controller.attach(&resolved.container.handle());
 
     // Phase five.
     let units = match units(&resolved).await {
@@ -538,7 +777,7 @@ async fn drive(kernel: Kernel) -> Outcome {
         shutdown.clone(),
         resolved.container.handle(),
     );
-    telemetry.record(Record::new(Level::Info, RUNNING).with("runnables", count(started)));
+    telemetry.record(Record::new(Level::Info, RUNNING).with("runnables", started));
     dispatcher.emit(Running { runnables: started });
 
     let signals = signals::capture(
@@ -595,13 +834,27 @@ async fn drive(kernel: Kernel) -> Outcome {
     telemetry.record(
         Record::new(Level::Info, REQUESTED)
             .with("reason", named(&reason))
-            .with("notes", count(request.notes.len())),
+            .with("notes", request.notes.len()),
     );
 
-    // Runnables first, components second, each in the reverse of the order it
-    // actually booted in. The supervisor drives the ladder itself, so this is
-    // the only place either rung is moved during a normal stop.
-    let errors = supervisor.stop(&controller).await;
+    // The first rung, moved here rather than left to the supervisor, because
+    // two things happen on it and one of them is not the supervisor's: every
+    // component is told to refuse new work, and every runnable is asked to wind
+    // down. The components are told FIRST — before a single runnable has
+    // returned — which is the whole point of the hook, and they are told
+    // CONCURRENTLY with the wind-down, so a component's drain never eats the
+    // window the runnables were given to finish what is in flight.
+    controller.begin_draining();
+    let watcher = controller.watcher();
+    let draining = ShutdownContext::new(&resolved.container, &dispatcher, &watcher);
+    let (drained, errors) = tokio::join!(
+        drain(&booted, &draining, policy.drain),
+        // Runnables first, components second, each in the reverse of the order
+        // it actually booted in. The supervisor drives the rest of the ladder
+        // itself, so this is the only place the second rung is moved during a
+        // normal stop.
+        supervisor.stop(&controller),
+    );
 
     // Before the components go down. A notification a runnable emitted on its
     // way out reaches listeners that resolve through the container, and a
@@ -617,14 +870,20 @@ async fn drive(kernel: Kernel) -> Outcome {
     // reason that has nothing to do with it. The second ladder is opened at
     // `Stopping` — nothing of the components' is in flight to drain — and the
     // walk charges `policy.stop` per component. See `rollback`.
-    let (components, watcher) = ShutdownController::new(policy);
+    let (components, stopping) = ShutdownController::new(policy);
     components.begin_stopping();
-    let cx = ShutdownContext::new(&resolved.container, &dispatcher, &watcher);
+    let cx = ShutdownContext::new(&resolved.container, &dispatcher, &stopping);
     let RolledBack {
         stopped,
-        failures: unstopped,
+        failures: rolled,
     } = rollback(booted, &cx, policy.stop).await;
     components.finish();
+
+    // A component that refused to refuse new work stopped as uncleanly as one
+    // that refused to release, and both reach the exit status the same way.
+    // Drain failures come first because they happened first.
+    let mut unstopped = drained.failures;
+    unstopped.extend(rolled);
 
     // Phase seven.
     controller.finish();
@@ -643,17 +902,18 @@ async fn drive(kernel: Kernel) -> Outcome {
     // sent an operator hunting for a failure that had been handled.
     let failures = errors.len();
     let refused_to_stop = unstopped.len();
-    let outcome = outcome_of(reason, errors, still_running, unstopped);
+    let ending = ending_of(reason, errors, still_running, unstopped);
     // What nothing recovered from: the failures the outcome itself carries.
     // Zero on every successful exit, by construction.
-    let unhandled = unhandled_of(&outcome);
+    let unhandled = unhandled_of(&ending.outcome);
     telemetry.record(
         Record::new(Level::Info, STOPPED)
-            .with("components", count(stopped.len()))
-            .with("unstopped", count(refused_to_stop))
-            .with("abandoned", count(abandoned))
-            .with("unhandled", count(unhandled))
-            .with("run_failures", count(failures)),
+            .with("components", stopped.len())
+            .with("drained", drained.drained.len())
+            .with("unstopped", refused_to_stop)
+            .with("abandoned", abandoned)
+            .with("unhandled", unhandled)
+            .with("run_failures", failures),
     );
     dispatcher.emit(Stopped {
         abandoned,
@@ -665,7 +925,7 @@ async fn drive(kernel: Kernel) -> Outcome {
     // of the process.
     settle(&dispatcher, policy.stop, &telemetry).await;
 
-    outcome
+    ending
 }
 
 /// Waits for the detached emissions to reach their listeners, and gives up
@@ -684,8 +944,7 @@ async fn drive(kernel: Kernel) -> Outcome {
 async fn settle(dispatcher: &EventDispatcher, budget: Duration, telemetry: &Arc<dyn Telemetry>) {
     if timeout(budget, dispatcher.settle()).await.is_err() {
         telemetry.record(
-            Record::new(Level::Warn, EMISSIONS_LEFT)
-                .with("in_flight", count(dispatcher.in_flight())),
+            Record::new(Level::Warn, EMISSIONS_LEFT).with("in_flight", dispatcher.in_flight()),
         );
     }
 }
@@ -733,8 +992,9 @@ async fn units(
 /// Stops the components a failed start left booted, and reports the failure.
 ///
 /// The ladder goes straight to [`Stage::Stopping`]: nothing ever ran, so there
-/// is no in-flight work to drain. No lifecycle event is published either — a
-/// kernel that never reached phase five never entered phase six.
+/// is no in-flight work to drain and no component is asked to refuse any. No
+/// lifecycle event is published either — a kernel that never reached phase five
+/// never entered phase six.
 ///
 /// [`Stage::Stopping`]: kernel_core::Stage::Stopping
 async fn give_up(
@@ -743,7 +1003,7 @@ async fn give_up(
     controller: &ShutdownController,
     policy: ShutdownPolicy,
     error: RunError,
-) -> Outcome {
+) -> Ending {
     // Phase three's own notifications may still be walking their tables; they
     // are waited for here for the same reason as on the normal ladder, before
     // the components a listener might resolve are stopped.
@@ -758,7 +1018,10 @@ async fn give_up(
     let _ = rollback(booted, &cx, policy.stop).await;
     controller.finish();
 
-    Outcome::Failed(KernelError::Run(vec![error]))
+    Ending {
+        outcome: Outcome::Failed(KernelError::Run(vec![error])),
+        errors: Vec::new(),
+    }
 }
 
 /// Publishes each rung of the ladder at the moment it is reached.
@@ -784,22 +1047,29 @@ fn announce(
 }
 
 /// What the whole run ended as: phase five, then the stop it was given.
-fn outcome_of(
+///
+/// Nothing is dropped on the way. The verdict takes the failures that ARE the
+/// verdict; the [`Ending`] keeps the rest, so a run that ended exactly as asked
+/// can still say what it cost.
+fn ending_of(
     reason: ShutdownReason,
     errors: Vec<RunError>,
     still_running: usize,
     unstopped: Vec<ShutdownError>,
-) -> Outcome {
-    let outcome = run_outcome(reason, errors, still_running);
+) -> Ending {
+    let (outcome, errors) = run_outcome(reason, errors, still_running);
     // Section 12: a component that fails to stop never holds the walk up, and
     // it influences the exit code. A run that already failed keeps the failure
     // that ended it as its cause — the stop failures are on the telemetry
     // stream either way — but a run that ended well and left a component
     // unstopped did not end well.
     if unstopped.is_empty() || !outcome.is_success() {
-        return outcome;
+        return Ending { outcome, errors };
     }
-    Outcome::Failed(KernelError::Shutdown(unstopped))
+    Ending {
+        outcome: Outcome::Failed(KernelError::Shutdown(unstopped)),
+        errors,
+    }
 }
 
 /// What phase five alone ended as, before the stop is taken into account.
@@ -825,25 +1095,69 @@ fn outcome_of(
 ///
 /// An essential runnable that ended on a failure of its own is fatal either
 /// way, and that failure is the cause the outcome carries.
-fn run_outcome(reason: ShutdownReason, errors: Vec<RunError>, still_running: usize) -> Outcome {
+///
+/// # What comes back beside the verdict
+///
+/// The errors the verdict does NOT name. A requested stop names none of them —
+/// it is a success, and turning it into a failure because a task had to be cut
+/// would exit non-zero on a stop that did exactly what was asked — so the whole
+/// list comes back and reaches the caller through [`Ending::errors`]. Dropping
+/// it here is what made a runnable abandoned at the stop budget invisible to
+/// `main` while it sat in plain sight in the telemetry stream.
+fn run_outcome(
+    reason: ShutdownReason,
+    errors: Vec<RunError>,
+    still_running: usize,
+) -> (Outcome, Vec<RunError>) {
     match reason {
-        ShutdownReason::Completed => Outcome::Completed,
-        ShutdownReason::Signal | ShutdownReason::Programmatic => Outcome::ShutdownRequested,
+        ShutdownReason::Completed => (Outcome::Completed, errors),
+        ShutdownReason::Signal | ShutdownReason::Programmatic => {
+            (Outcome::ShutdownRequested, errors)
+        }
         ShutdownReason::EssentialFinished(id) => {
-            let fatal: Vec<RunError> = errors
-                .into_iter()
-                .filter(|error| error.runnable() == id)
-                .collect();
+            let (fatal, rest): (Vec<RunError>, Vec<RunError>) =
+                errors.into_iter().partition(|error| error.runnable() == id);
             match (fatal.is_empty(), still_running) {
-                (true, 0) => Outcome::Completed,
-                (true, _) => Outcome::Failed(KernelError::Run(vec![RunError::failed(
-                    id,
-                    ESSENTIAL_LEFT.to_owned().into(),
-                )])),
-                (false, _) => Outcome::Failed(KernelError::Run(fatal)),
+                (true, 0) => (Outcome::Completed, rest),
+                (true, _) => (
+                    Outcome::Failed(KernelError::Run(vec![RunError::failed(
+                        id,
+                        ESSENTIAL_LEFT.to_owned().into(),
+                    )])),
+                    rest,
+                ),
+                (false, _) => (Outcome::Failed(KernelError::Run(fatal)), rest),
             }
         }
     }
+}
+
+/// The budgets phase six runs on, after the configuration has had its say.
+///
+/// `default` is what the builder was given; each key found under `path`
+/// replaces its half of it. An absent `path`, an absent node and an absent key
+/// all leave the default in place, because none of the three is a statement
+/// about the budgets — whereas a key that is present and unreadable is, and it
+/// is reported rather than rounded down to a default nobody asked for.
+fn policy_at(
+    tree: &ConfigTree,
+    default: ShutdownPolicy,
+    path: Option<&str>,
+) -> Result<ShutdownPolicy, ConfigError> {
+    let Some(path) = path else {
+        return Ok(default);
+    };
+    let Some(node) = tree.get(path) else {
+        return Ok(default);
+    };
+
+    let drain: Option<Duration> = node.field("drain").map_err(|error| error.under(path))?;
+    let stop: Option<Duration> = node.field("stop").map_err(|error| error.under(path))?;
+
+    Ok(ShutdownPolicy::new(
+        drain.unwrap_or(default.drain),
+        stop.unwrap_or(default.stop),
+    ))
 }
 
 /// Records the phase that refused to build, and hands the error back.
@@ -859,11 +1173,6 @@ fn refused(telemetry: &Arc<dyn Telemetry>, phase: &'static str, error: KernelErr
 /// How many bindings the container holds, every lifetime counted.
 fn bindings_of(resolved: &Resolved) -> usize {
     resolved.container.binding_count()
-}
-
-/// A count, in the only integer shape a record carries.
-fn count(value: usize) -> i64 {
-    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 /// The name a record reports a shutdown reason under.
@@ -982,7 +1291,7 @@ mod tests {
         Backoff, BoxFuture, BundleManifest, ComponentDescriptor, ComponentError, ComponentId,
         ConfigError, ConfigTree, ContractRef, Criticality, Event, FieldValue, Flow, Health,
         HealthProbe, ListenerError, Priority, RecordingTelemetry, RegisterError, RestartPolicy,
-        RunnableDescriptor,
+        RunnableDescriptor, Stage,
     };
 
     use crate::component::{BootContext, Component};
@@ -1073,6 +1382,8 @@ mod tests {
     struct Unit<const N: usize> {
         trace: Trace,
         fails: bool,
+        /// Never returns from `drain`, which is what the ladder must survive.
+        hangs: bool,
     }
 
     impl<const N: usize> Unit<N> {
@@ -1080,6 +1391,7 @@ mod tests {
             Self {
                 trace: trace.clone(),
                 fails: false,
+                hangs: false,
             }
         }
 
@@ -1087,6 +1399,15 @@ mod tests {
             Self {
                 trace: trace.clone(),
                 fails: true,
+                hangs: false,
+            }
+        }
+
+        fn hanging(trace: &Trace) -> Self {
+            Self {
+                trace: trace.clone(),
+                fails: false,
+                hangs: true,
             }
         }
     }
@@ -1110,6 +1431,25 @@ mod tests {
                     let id = ComponentId::new(NAMES[N], u32::try_from(N).expect("small"));
                     return Err(ComponentError::new(id, "refused".into()));
                 }
+                Ok(())
+            })
+        }
+
+        fn drain<'a>(
+            &'a self,
+            cx: &'a ShutdownContext<'a>,
+        ) -> BoxFuture<'a, Result<(), ComponentError>> {
+            Box::pin(async move {
+                if self.hangs {
+                    core::future::pending::<()>().await;
+                }
+                // The stage is part of the entry, so the order assertion below
+                // pins the rung as well as the moment.
+                let stage = cx.shutdown().stage();
+                self.trace.push(match stage {
+                    Stage::Draining => format!("drain:{}", NAMES[N]),
+                    other => format!("drain:{}:{other:?}", NAMES[N]),
+                });
                 Ok(())
             })
         }
@@ -1571,7 +1911,7 @@ mod tests {
         assert!(outcome.is_success());
         assert_eq!(
             trace.entries(),
-            ["boot:alpha", "run", "returned", "stop:alpha"]
+            ["boot:alpha", "run", "drain:alpha", "returned", "stop:alpha"]
         );
         assert!(sink.contains(STOPPED));
     }
@@ -1629,7 +1969,7 @@ mod tests {
 
         // A graph with nothing running in it is a program that has finished.
         assert!(matches!(outcome, Outcome::Completed));
-        assert_eq!(trace.entries(), ["boot:alpha", "stop:alpha"]);
+        assert_eq!(trace.entries(), ["boot:alpha", "drain:alpha", "stop:alpha"]);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1654,7 +1994,7 @@ mod tests {
         // essential one leaving others behind — is the integration suite's
         // `essential_end_stops_kernel`.
         assert!(matches!(outcome, Outcome::Completed));
-        assert_eq!(trace.entries(), ["boot:alpha", "stop:alpha"]);
+        assert_eq!(trace.entries(), ["boot:alpha", "drain:alpha", "stop:alpha"]);
         assert_eq!(
             field(&sink, REQUESTED, "reason"),
             Some(FieldValue::from("essential_finished"))
@@ -1895,6 +2235,392 @@ mod tests {
         assert_eq!(field(&sink, STOPPED, "errors"), None);
     }
 
+    // ----------------------------------------------------------------------
+    // The rung a component could not see
+    // ----------------------------------------------------------------------
+
+    // The gap: a component was handed its `ShutdownContext` only once every
+    // runnable had returned, so it saw the end and never the rung. Every
+    // resource that must refuse new work had to be split in two.
+    #[tokio::test(start_paused = true)]
+    async fn drain_precedes_the_wind_down() {
+        let sink = RecordingTelemetry::new();
+        let trace = Trace::default();
+        let inner = trace.clone();
+
+        let kernel = builder(&sink, move |registry| {
+            registry.component(Provider::from_value(Arc::new(Unit::<0>::new(&inner))));
+            registry.runnable(Provider::from_value(Arc::new(Waiter(
+                essential(),
+                inner.clone(),
+            ))));
+            Ok(())
+        })
+        .build()
+        .await
+        .expect("build");
+
+        let handle = kernel.handle();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            handle.shutdown();
+        });
+
+        let outcome = kernel.run().await;
+
+        assert!(outcome.is_success());
+        // `drain:alpha` carries the stage it observed, and it stands strictly
+        // before the runnable returned.
+        assert_eq!(
+            trace.entries(),
+            ["boot:alpha", "run", "drain:alpha", "returned", "stop:alpha"]
+        );
+    }
+
+    // The other half of the ruling: a component that hangs in `drain` is cut,
+    // and the ladder walks on over it.
+    #[tokio::test(start_paused = true)]
+    async fn hanging_drain_is_cut() {
+        let sink = RecordingTelemetry::new();
+        let trace = Trace::default();
+        let inner = trace.clone();
+
+        let kernel = builder(&sink, move |registry| {
+            registry.component(Provider::from_value(Arc::new(Unit::<0>::hanging(&inner))));
+            registry.runnable(Provider::from_value(Arc::new(Waiter(
+                essential(),
+                inner.clone(),
+            ))));
+            Ok(())
+        })
+        .build()
+        .await
+        .expect("build");
+
+        let handle = kernel.handle();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            handle.shutdown();
+        });
+
+        // The whole point: this returns at all.
+        let outcome = kernel.run().await;
+
+        // Nothing was held up: the runnable wound down and the component was
+        // still shut down afterwards.
+        assert!(trace.has("returned"));
+        assert!(trace.has("stop:alpha"));
+        // It never returned from `drain`, so it left no entry for it.
+        assert!(!trace.has("drain:alpha"));
+        // A component that refused to refuse new work stopped uncleanly, and
+        // the exit status says so.
+        match outcome.error() {
+            Some(KernelError::Shutdown(errors)) => assert_eq!(errors[0].unit(), "alpha"),
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    // ----------------------------------------------------------------------
+    // What a requested stop used to throw away
+    // ----------------------------------------------------------------------
+
+    // The gap: `Signal | Programmatic` mapped to `ShutdownRequested` and
+    // dropped the errors the supervisor had just produced, so a task abandoned
+    // at the stop budget was invisible to `main`.
+    #[tokio::test(start_paused = true)]
+    async fn requested_stop_keeps_errors() {
+        let sink = RecordingTelemetry::new();
+
+        let kernel = builder(&sink, |registry| {
+            registry.runnable(Provider::from_value(Arc::new(Deaf(ancillary()))));
+            registry.runnable(Provider::from_value(Arc::new(Prompt(ancillary(), true))));
+            Ok(())
+        })
+        .build()
+        .await
+        .expect("build");
+
+        let handle = kernel.handle();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            handle.shutdown();
+        });
+
+        let ending = kernel.ran().await;
+
+        // The stop was asked for and honoured: still not a failure.
+        assert!(ending.is_success());
+        assert!(matches!(ending.outcome(), Outcome::ShutdownRequested));
+        // And the task it had to abandon to honour it is reachable.
+        let abandoned: Vec<&RunError> = ending
+            .errors()
+            .iter()
+            .filter(|error| matches!(error.kind(), RunErrorKind::DeadlineExceeded))
+            .collect();
+        assert_eq!(abandoned.len(), 1);
+        assert_eq!(abandoned[0].runnable().name(), "deaf");
+        assert!(format!("{ending:?}").contains("Ending"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn clean_run_carries_nothing() {
+        let sink = RecordingTelemetry::new();
+        let trace = Trace::default();
+        let inner = trace.clone();
+
+        let kernel = builder(&sink, move |registry| {
+            registry.runnable(Provider::from_value(Arc::new(Waiter(
+                essential(),
+                inner.clone(),
+            ))));
+            Ok(())
+        })
+        .build()
+        .await
+        .expect("build");
+
+        let handle = kernel.handle();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            handle.shutdown();
+        });
+
+        let ending = kernel.ran().await;
+
+        assert!(ending.errors().is_empty());
+        assert!(matches!(ending.into_outcome(), Outcome::ShutdownRequested));
+    }
+
+    // A failed run keeps its cause inside the outcome, and nothing is reported
+    // twice.
+    #[tokio::test(start_paused = true)]
+    async fn failure_stays_in_the_outcome() {
+        let sink = RecordingTelemetry::new();
+        let kernel = builder(&sink, |registry| {
+            registry.runnable(Provider::from_value(Arc::new(Prompt(essential(), false))));
+            Ok(())
+        })
+        .build()
+        .await
+        .expect("build");
+
+        let (outcome, errors) = kernel.ran().await.into_parts();
+
+        match outcome.error() {
+            Some(KernelError::Run(fatal)) => assert_eq!(fatal.len(), 1),
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+        assert!(errors.is_empty());
+    }
+
+    // ----------------------------------------------------------------------
+    // Budgets the application configures
+    // ----------------------------------------------------------------------
+
+    fn budgets(tree: &mut ConfigTree, key: &str, value: &str) {
+        tree.insert(key, kernel_core::ConfigNode::from(value))
+            .expect("insert");
+    }
+
+    // The gap: the policy was a builder input captured before `build` loaded a
+    // single source, so an application wanting configurable budgets had to load
+    // the same sources twice.
+    #[tokio::test]
+    async fn policy_comes_from_config() {
+        let mut tree = ConfigTree::empty();
+        budgets(&mut tree, "kernel.shutdown.drain", "3s");
+        budgets(&mut tree, "kernel.shutdown.stop", "7s");
+
+        let kernel = Kernel::builder()
+            .config_source(MemorySource::new(tree))
+            .shutdown_policy(brief())
+            .shutdown_policy_at("kernel.shutdown")
+            .build()
+            .await
+            .expect("build");
+
+        assert_eq!(
+            kernel.policy(),
+            ShutdownPolicy::new(Duration::from_secs(3), Duration::from_secs(7))
+        );
+    }
+
+    // Key by key: what the tree does not name keeps the figure the builder was
+    // given.
+    #[tokio::test]
+    async fn absent_budget_keeps_default() {
+        let mut tree = ConfigTree::empty();
+        budgets(&mut tree, "kernel.shutdown.drain", "3s");
+
+        let kernel = Kernel::builder()
+            .config_source(MemorySource::new(tree))
+            .shutdown_policy(brief())
+            .shutdown_policy_at("kernel.shutdown")
+            .build()
+            .await
+            .expect("build");
+
+        assert_eq!(kernel.policy().drain, Duration::from_secs(3));
+        assert_eq!(kernel.policy().stop, brief().stop);
+
+        // And a path that addresses nothing at all leaves both.
+        let untouched = Kernel::builder()
+            .shutdown_policy(brief())
+            .shutdown_policy_at("kernel.shutdown")
+            .build()
+            .await
+            .expect("build");
+
+        assert_eq!(untouched.policy(), brief());
+    }
+
+    #[tokio::test]
+    async fn malformed_budget_refuses() {
+        let sink = RecordingTelemetry::new();
+        let mut tree = ConfigTree::empty();
+        budgets(&mut tree, "kernel.shutdown.drain", "a fortnight");
+
+        let error = Kernel::builder()
+            .telemetry(Arc::new(sink.clone()) as Arc<dyn Telemetry>)
+            .config_source(MemorySource::new(tree))
+            .shutdown_policy_at("kernel.shutdown")
+            .build()
+            .await
+            .expect_err("build fails");
+
+        match error {
+            // Reported with phase one, not rounded down to a default nobody
+            // asked for.
+            KernelError::Config(errors) => {
+                assert_eq!(errors.len(), 1);
+                assert_eq!(errors[0].path(), "kernel.shutdown.drain");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert!(sink.contains(BUILD_FAILED));
+    }
+
+    // The budgets read from the tree are the ones phase six actually runs on,
+    // not merely the ones the accessor reports.
+    #[tokio::test(start_paused = true)]
+    async fn configured_budget_bounds_stop() {
+        let sink = RecordingTelemetry::new();
+        let mut tree = ConfigTree::empty();
+        budgets(&mut tree, "kernel.shutdown.drain", "1s");
+        budgets(&mut tree, "kernel.shutdown.stop", "2s");
+
+        let kernel = Kernel::builder()
+            .telemetry(Arc::new(sink.clone()) as Arc<dyn Telemetry>)
+            .capture_signals(false)
+            .config_source(MemorySource::new(tree))
+            // Long enough that a run bounded by it would never finish here.
+            .shutdown_policy(ShutdownPolicy::new(
+                Duration::from_secs(600),
+                Duration::from_secs(600),
+            ))
+            .shutdown_policy_at("kernel.shutdown")
+            .bundle(Parts("unit", |registry: &mut Registry| {
+                registry.runnable(Provider::from_value(Arc::new(Deaf(ancillary()))));
+                Ok(())
+            }))
+            .build()
+            .await
+            .expect("build");
+
+        let handle = kernel.handle();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            handle.shutdown();
+        });
+
+        let started = tokio::time::Instant::now();
+        let outcome = kernel.run().await;
+
+        assert!(outcome.is_success());
+        // Three seconds of ladder, not twenty minutes of it.
+        assert!(started.elapsed() < Duration::from_secs(60));
+        assert_eq!(field(&sink, STOPPED, "abandoned"), Some(FieldValue::Int(1)));
+    }
+
+    // ----------------------------------------------------------------------
+    // Reaching into the graph across the run
+    // ----------------------------------------------------------------------
+
+    // `run` consumes the kernel, so the only route to a value a component
+    // settles at boot is a container cloned before the run starts.
+    #[tokio::test(start_paused = true)]
+    async fn clone_reads_after_boot() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        trait Settling: Send + Sync + 'static {
+            fn reading(&self) -> usize;
+        }
+
+        struct Settled(AtomicUsize);
+
+        impl Settling for Settled {
+            fn reading(&self) -> usize {
+                self.0.load(Ordering::Relaxed)
+            }
+        }
+
+        /// Writes what it settled on, and only once it has booted.
+        struct Settler(Arc<Settled>);
+
+        impl Component for Settler {
+            fn name() -> &'static str {
+                "settler"
+            }
+
+            fn descriptor(&self) -> ComponentDescriptor {
+                ComponentDescriptor::new()
+            }
+
+            fn boot<'a>(
+                &'a self,
+                _cx: &'a BootContext<'a>,
+            ) -> BoxFuture<'a, Result<(), ComponentError>> {
+                Box::pin(async move {
+                    self.0.0.store(7, Ordering::Relaxed);
+                    Ok(())
+                })
+            }
+        }
+
+        let sink = RecordingTelemetry::new();
+        let settled = Arc::new(Settled(AtomicUsize::new(0)));
+        let bound = Arc::clone(&settled);
+
+        let kernel = builder(&sink, move |registry| {
+            registry.provide::<dyn Settling>(Provider::from_value(
+                Arc::clone(&bound) as Arc<dyn Settling>
+            ));
+            registry.component(Provider::from_value(Arc::new(Settler(Arc::clone(&bound)))));
+            registry.runnable(Provider::from_value(Arc::new(Waiter(
+                essential(),
+                Trace::default(),
+            ))));
+            Ok(())
+        })
+        .build()
+        .await
+        .expect("build");
+
+        // Taken BEFORE the run, because there is no accessor afterwards.
+        let container = kernel.container().clone();
+        let handle = kernel.handle();
+        let running = tokio::spawn(kernel.run());
+
+        // The clone shares one table with the kernel, so it reads what phase
+        // four built rather than a copy of an empty graph.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let unit: Arc<dyn Settling> = container.get().await.expect("bound");
+        assert_eq!(unit.reading(), 7);
+
+        handle.shutdown();
+        assert!(running.await.expect("driver").is_success());
+    }
+
     #[test]
     fn builder_defaults_are_stated() {
         let builder = KernelBuilder::default();
@@ -1902,6 +2628,7 @@ mod tests {
         assert_eq!(builder.sources.len(), 0);
         assert!(builder.bundles.is_empty());
         assert_eq!(builder.policy, ShutdownPolicy::DEFAULT);
+        assert_eq!(builder.policy_path, None);
         assert!(builder.capture_signals);
         assert!(format!("{builder:?}").contains("capture_signals"));
     }

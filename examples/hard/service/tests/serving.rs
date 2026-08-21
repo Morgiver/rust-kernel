@@ -50,7 +50,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use gateway_bundle::{Acceptor, Doorway, GatewayBundle, Tally};
-use kernel::core::telemetry::{FieldValue, Record};
+use kernel::core::telemetry::Record;
 use kernel::core::{ConfigNode, ConfigTree, RecordingTelemetry};
 use kernel::{MemorySource, Outcome, ShutdownPolicy};
 use kernel_testkit::{TestBuilder, TestHarness};
@@ -179,7 +179,7 @@ impl Service {
         until("a job to be admitted", || {
             telemetry.records().iter().any(|record| {
                 record.event == "worker.bench"
-                    && matches!(record.field("admitted"), Some(FieldValue::Int(seen)) if *seen >= at_least)
+                    && record.int("admitted").is_some_and(|seen| seen >= at_least)
             })
         })
         .await;
@@ -329,9 +329,9 @@ async fn until(what: &str, mut ready: impl FnMut() -> bool) {
 
 /// The `runnable` field of a supervisor record.
 fn blamed(record: &Record) -> String {
-    match record.field("runnable") {
-        Some(FieldValue::Str(name)) => name.clone(),
-        other => panic!("a supervisor record names its runnable: {other:?}"),
+    match record.str("runnable") {
+        Some(name) => name.to_owned(),
+        None => panic!("a supervisor record names its runnable: {record:?}"),
     }
 }
 

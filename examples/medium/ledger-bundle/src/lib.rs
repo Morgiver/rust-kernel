@@ -46,9 +46,9 @@
 
 use std::sync::Arc;
 
-use kernel::core::{BuildError, BundleManifest, RegisterError};
+use kernel::core::{BundleManifest, RegisterError};
 use kernel::health::Probe;
-use kernel::{Bundle, ContractRef, Provider, Registry};
+use kernel::{Bundle, Provider, Registry};
 use ledger_component::{Book, BookProbe, Settings};
 use ledger_contracts::{Ledger, OpeningNote};
 
@@ -116,26 +116,15 @@ impl Bundle for LedgerBundle {
         let book = Arc::new(Book::new(settings));
 
         // As a component: the kernel boots it, stops it, and enforces the
-        // timeouts its descriptor declares.
-        registry.component(Provider::from_value(Arc::clone(&book)));
-
-        // As the contract: resolved through the component's own binding, so
-        // `container.get::<dyn Ledger>()` and the kernel's boot walk reach one
-        // object. The requirement is declared rather than inferred — nothing
-        // can look inside the closure — and the container checks the
-        // declaration in debug builds.
-        registry.provide::<dyn Ledger>(
-            Provider::from_fn(|container| {
-                Box::pin(async move {
-                    let book = container
-                        .get::<Book>()
-                        .await
-                        .map_err(|error| BuildError::new("Ledger", Box::new(error)))?;
-                    Ok(book as Arc<dyn Ledger>)
-                })
-            })
-            .requires([ContractRef::of::<Book>()]),
-        );
+        // timeouts its descriptor declares. `also` binds the same object under
+        // the contract everyone else names — an alias, not a second provider:
+        // it resolves the component's own binding and widens the very `Arc` that
+        // comes back, so `container.get::<dyn Ledger>()` and the kernel's boot
+        // walk reach one object. The one resolution it performs is declared for
+        // it, so phase three orders it and the debug guard passes.
+        registry
+            .component(Provider::from_value(Arc::clone(&book)))
+            .also(|book: Arc<Book>| book as Arc<dyn Ledger>);
 
         // As a health probe. The kernel declares the `Probe` point itself, so
         // this contributes to a point no application had to open, and the

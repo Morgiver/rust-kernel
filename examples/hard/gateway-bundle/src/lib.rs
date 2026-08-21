@@ -24,17 +24,18 @@
 //!
 //! | registered as | what | why that kind |
 //! |---|---|---|
-//! | component | [`Doorway`] | a resource: bound once, released once, ordered by the boot graph |
-//! | runnable | [`Acceptor`] | it must watch the ladder, and only a runnable can |
+//! | component | [`Doorway`] | a resource: bound once, shut at `Draining`, released once, ordered by the boot graph |
+//! | runnable | [`Acceptor`] | it owns work in flight, and only a runnable can tell the two rungs apart over it |
 //! | scoped binding | [`Visit`] | one per request, resolved rather than threaded through calls |
 //! | contribution | [`DoorwayProbe`] | health belongs to whatever owns the resource |
 //!
-//! The first two rows are the whole lesson of this example. A component is
-//! handed its shutdown context only after every runnable has already stopped,
-//! so it never observes `Draining` and cannot express "refuse new work, finish
-//! held work". The accept loop has to express exactly that, so the accept loop
-//! is a runnable — see the [`gateway_component`] module documentation for the
-//! long form.
+//! The first two rows are the whole lesson of this example, and the line
+//! between them is not the ladder — a component is told to drain at
+//! `Draining`, before any runnable winds down, so refusing new work is the
+//! RESOURCE owner's job and the door is shut by [`Doorway`]. What only a
+//! runnable can do is hold the requests already accepted and give them the
+//! drain window before cutting them at `Stopping`. See the
+//! [`gateway_component`] module documentation for the long form.
 //!
 //! # Configuration
 //!
@@ -147,7 +148,7 @@ impl Bundle for GatewayBundle {
         registry.component(Provider::from_value(Arc::clone(&doorway)));
 
         // As a health probe, contributed to the point the kernel declares.
-        // Down the instant the acceptor closes the door, which is a whole
+        // Down the instant the door's own drain shuts it, which is a whole
         // drain window before the process exits: that is when traffic should
         // stop being sent here.
         registry.contribute(Probe::new(DoorwayProbe::new(Arc::clone(&doorway))));
@@ -180,11 +181,12 @@ impl Bundle for GatewayBundle {
         // debug builds — a provider that resolves something it did not declare
         // panics rather than working by accident.
         //
-        // `Visit` is deliberately absent from the list, and it is not an
-        // oversight: it is `Scoped`, and a requirer that is not itself `Scoped`
-        // declaring a `Scoped` requirement is a phase-three `LifetimeConflict`.
-        // The acceptor resolves it inside the scope it opens per request, where
-        // there is a unit of work for it to belong to.
+        // `Visit` is absent from that list and present in the second one: it
+        // is `Scoped`, so a requirer that is not itself `Scoped` naming it in
+        // `requires` is a phase-three `LifetimeConflict`. The acceptor
+        // resolves it inside the scope it opens per request, which is what
+        // `requires_scoped` declares — checked by phase three as provided and
+        // `Scoped`, and by the guard on every request.
         registry.runnable(
             Provider::from_fn(move |container| {
                 Box::pin(async move {
@@ -202,7 +204,8 @@ impl Bundle for GatewayBundle {
             .requires([
                 ContractRef::of::<Doorway>(),
                 ContractRef::of::<dyn Handler>(),
-            ]),
+            ])
+            .requires_scoped([ContractRef::of::<Visit>()]),
         );
 
         Ok(())

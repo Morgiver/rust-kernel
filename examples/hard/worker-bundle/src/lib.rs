@@ -7,24 +7,26 @@
 //! names a type of the gateway feature, and the gateway feature names nothing
 //! of this one.
 //!
-//! # Why the door is closed by a runnable and never by a component
+//! # Who shuts the door, and who holds the window open
 //!
 //! This is the single most useful thing in the hard example, and the design
 //! document does not say it.
 //!
-//! A [`Component`](kernel::Component) is handed its `ShutdownContext` when the
-//! kernel comes to stop it, and that happens *after* every runnable has already
-//! returned. By then the drain window is over. A component therefore never
-//! observes `Draining` at all — it observes the end, which is a different fact.
+//! *Refusing new work* belongs to whatever owns the resource new work arrives
+//! through. Here that resource is the queue, so `Bench` is a
+//! [`Component`] and shuts its own door in
+//! [`Component::drain`] — called as the ladder
+//! reaches `Draining`, before a single runnable has been asked to wind down. No
+//! loop, no token, no task: it is told once, at the one instant the refusal has
+//! to start. The gateway feature does the same thing with its listening socket.
 //!
-//! Only a [`Runnable`] holds a `RunContext`, and only a `RunContext` carries
-//! the token that tells *stop taking new work* from *stop now*. So the unit
-//! that closes a door at `Draining` is a runnable, necessarily. In the gateway
-//! feature that door is the listening socket; here it is the queue, and `Hand` —
-//! the runnable that works the bench — is what closes it. The queue itself is a
-//! plain contract-bound value with no lifecycle of its own; it could not close
-//! itself at the right moment if it wanted to, because nothing hands it the
-//! ladder.
+//! *Holding work already admitted through the drain window, and letting the
+//! stop cut what outlives it* belongs to the loop that owns that work. Only a
+//! [`Runnable`] holds a `RunContext`, and only a `RunContext` carries the token
+//! that tells *stop taking new work* from *stop now*. `Hand` — the runnable
+//! that works the bench — is what keeps working while the door is shut, and
+//! what returns at `Stopping`. It never closes anything, and the absence of a
+//! `draining` branch in its loop is the shape of that.
 //!
 //! The consequence is worth stating plainly: both doors shut on the same rung.
 //! A connection accepted just before `Draining` whose line arrives just after it
@@ -34,9 +36,9 @@
 //!
 //! # What it registers
 //!
-//! * `Bench` — the bounded queue, bound both as itself and as
+//! * `Bench` — the bounded queue, registered as a component and aliased to
 //!   [`WorkQueue`]. It refuses at the door: [`Refusal::Full`] when the bound is
-//!   reached, [`Refusal::Closed`] once the ladder has moved. It never waits for
+//!   reached, [`Refusal::Closed`] once its own drain has run. It never waits for
 //!   room, because a queue that waits for room is an unbounded queue wearing a
 //!   bounded queue's name.
 //! * `Clerk` — the [`Handler`]. It submits first and opens a [`Scope`] second,
@@ -45,7 +47,7 @@
 //! * `Docket` — a [`Lifetime::Scoped`] binding. Two concurrent requests get two
 //!   dockets; one request resolving twice gets one docket. That is what a scope
 //!   *is*.
-//! * `Hand` — the runnable that works the bench, closes it at `Draining`, and
+//! * `Hand` — the runnable that works the bench through the drain window and
 //!   returns at `Stopping`.
 //! * `Foreman` — an ancillary runnable that trips on purpose the first time it
 //!   runs, is restarted by its own policy, and leaves every request in flight
@@ -72,11 +74,13 @@ use std::sync::Arc;
 
 use gateway_contracts::{Handler, HandlerError, Reply, Request};
 use kernel::core::{
-    Backoff, BuildError, ConfigError, ContainerError, Level, Record, RegisterError, RunError,
+    Backoff, BuildError, ComponentError, ConfigError, ContainerError, Level, Record, RegisterError,
+    RunError,
 };
 use kernel::{
-    BoxFuture, Bundle, BundleManifest, Container, ContractRef, Criticality, Lifetime, Provider,
-    Registry, RestartPolicy, RunContext, Runnable, RunnableDescriptor, Scope, Telemetry,
+    BootContext, BoxFuture, Bundle, BundleManifest, Component, ComponentDescriptor, Container,
+    ContractRef, Criticality, Lifetime, Provider, Registry, RestartPolicy, RunContext, Runnable,
+    RunnableDescriptor, Scope, ShutdownContext, Telemetry,
 };
 use tokio::sync::{Mutex, mpsc, oneshot};
 use worker_contracts::{Done, Job, JobId, Refusal, Ticket, WorkError, WorkQueue};
@@ -170,7 +174,8 @@ struct Bench {
     intake: Mutex<mpsc::Receiver<Assignment>>,
     /// How many jobs may wait for a hand.
     capacity: usize,
-    /// Whether the door is still open. Closed by the hand at `Draining`.
+    /// Whether the door is still open. Closed by this bench's own
+    /// [`drain`](Component::drain) at `Draining`.
     open: AtomicBool,
     /// The next job identity.
     next: AtomicU64,
@@ -198,8 +203,9 @@ impl Bench {
 
     /// Stops admitting. Work already admitted is untouched.
     ///
-    /// Called from `Hand::run` when the ladder reaches `Draining`, which is
-    /// the only place in this crate that can observe that stage.
+    /// Called from [`drain`](Component::drain), which the kernel runs as the
+    /// ladder reaches `Draining` and before any runnable has been asked to
+    /// wind down. Idempotent.
     fn close(&self) {
         self.open.store(false, Ordering::Release);
     }
@@ -219,6 +225,45 @@ impl Bench {
             self.admitted.load(Ordering::Relaxed),
             self.refused.load(Ordering::Relaxed),
         )
+    }
+}
+
+impl Component for Bench {
+    fn name() -> &'static str {
+        "bench"
+    }
+
+    fn descriptor(&self) -> ComponentDescriptor {
+        // Nothing to acquire and nothing to release, so nothing to bound. What
+        // this component exists for is the rung between the two.
+        ComponentDescriptor::new()
+    }
+
+    fn boot<'a>(&'a self, _cx: &'a BootContext<'a>) -> BoxFuture<'a, Result<(), ComponentError>> {
+        // The channel was made by the constructor. A queue has nothing to open.
+        Box::pin(async { Ok(()) })
+    }
+
+    /// Shuts the door, at the rung where refusing new work belongs.
+    ///
+    /// The bench is the RESOURCE new work arrives through, so the bench is what
+    /// refuses it. `Hand` is still working when this returns, and every job
+    /// already admitted is still its to finish — that window is what the two
+    /// rungs are for.
+    fn drain<'a>(
+        &'a self,
+        cx: &'a ShutdownContext<'a>,
+    ) -> BoxFuture<'a, Result<(), ComponentError>> {
+        Box::pin(async move {
+            self.close();
+            let (admitted, refused) = self.tally();
+            cx.telemetry().record(
+                Record::new(Level::Info, "worker.bench_closed")
+                    .with("admitted", admitted)
+                    .with("refused", refused),
+            );
+            Ok(())
+        })
     }
 }
 
@@ -408,12 +453,12 @@ impl Handler for Clerk {
 
 /// The runnable that works the bench.
 ///
-/// It is the only unit in this crate that sees the ladder, so it is the only one
-/// that can close the queue's door at the right moment. See the crate
-/// documentation for why that follows from the design rather than from taste.
+/// It owns no door. What it owns is the work already admitted, and giving that
+/// work the drain window before the stop cuts it is the one thing only a
+/// runnable can do. See the crate documentation.
 struct Hand {
-    /// The queue, concretely: closing it is not part of the contract, and
-    /// should not be — nothing that merely submits work may close the door.
+    /// The queue, concretely: taking a job off it is not part of the submit
+    /// contract, and should not be.
     bench: Arc<Bench>,
     /// How long one job takes.
     hold: Duration,
@@ -450,10 +495,6 @@ impl Runnable for Hand {
 
     fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
         Box::pin(async move {
-            // Guards the `draining` branch. Without it the branch is ready
-            // forever once the stage has been entered, and the loop spins.
-            let mut open = true;
-
             loop {
                 tokio::select! {
                     // The clock is running. Whatever is still admitted is
@@ -461,22 +502,11 @@ impl Runnable for Hand {
                     // `Assignment` becomes a `Cancelled` ticket for its caller.
                     () = cx.shutdown().stopping() => break,
 
-                    // Stop taking new work, finish what is held. This is the
-                    // whole reason a runnable and not a component owns this
-                    // decision, and it is the window the example exists to
-                    // prove useful: the loop keeps going, so every job already
-                    // on the bench is still worked.
-                    () = cx.shutdown().draining(), if open => {
-                        self.bench.close();
-                        open = false;
-                        let (admitted, refused) = self.bench.tally();
-                        cx.telemetry().record(
-                            Record::new(Level::Info, "worker.bench_closed")
-                                .with("admitted", admitted)
-                                .with("refused", refused),
-                        );
-                    }
-
+                    // No `draining` branch, and its absence is the point: the
+                    // bench shuts its own door on that rung, so this loop has
+                    // nothing to do about it but keep working. Which is exactly
+                    // what the window is for — every job already admitted is
+                    // still worked.
                     assignment = self.bench.next_job() => match assignment {
                         Some(assignment) => self.work(assignment).await,
                         // Nothing can arrive again.
@@ -539,10 +569,7 @@ impl Runnable for Foreman {
                     Record::new(Level::Info, "worker.bench")
                         .with("admitted", admitted)
                         .with("refused", refused)
-                        .with(
-                            "capacity",
-                            u32::try_from(self.bench.capacity).unwrap_or(u32::MAX),
-                        ),
+                        .with("capacity", self.bench.capacity),
                 );
 
                 // A new turn is new work, so `draining` is the stage that ends
@@ -580,28 +607,21 @@ impl Bundle for Bundled {
         let settings =
             Settings::read(registry).map_err(|error| RegisterError::new(NAME, Box::new(error)))?;
 
-        // The bench, bound as itself. `Hand` needs the concrete type — closing
-        // the door is not part of the queue contract and must not be — so the
-        // object is bound once here and reached twice below.
-        registry.provide(Provider::from_fn(move |_container| {
-            Box::pin(async move { Ok(Arc::new(Bench::new(settings.capacity))) })
-        }));
-
-        // The same object, under the contract everyone else uses. Resolving the
-        // binding above rather than building a second bench is what makes "one
-        // queue" a mechanical fact instead of a convention.
-        registry.provide(
-            Provider::from_fn(|container| {
-                Box::pin(async move {
-                    let bench = container
-                        .get::<Bench>()
-                        .await
-                        .map_err(|error| BuildError::new("Bench", Box::new(error)))?;
-                    Ok(bench as Arc<dyn WorkQueue>)
-                })
-            })
-            .requires([ContractRef::of::<Bench>()]),
-        );
+        // The bench, as the component that owns the door. It is registered as a
+        // component for one reason and it is the whole shape of this example:
+        // the kernel calls `drain` on the rung where new work has to start
+        // being refused, and refusing new work is the resource's own business.
+        //
+        // `also` binds the same object under the contract everyone else uses.
+        // It is an alias, not a second provider: it resolves the binding above
+        // and widens the very `Arc` that comes back, so "one queue" is a
+        // mechanical fact rather than a convention, and `Hand` can still reach
+        // the concrete type it needs to take jobs off.
+        registry
+            .component(Provider::from_fn(move |_container| {
+                Box::pin(async move { Ok(Arc::new(Bench::new(settings.capacity))) })
+            }))
+            .also(|bench: Arc<Bench>| bench as Arc<dyn WorkQueue>);
 
         // One docket per unit of work. The counter lives in the closure, so it
         // survives every build and numbers them in order.
@@ -622,10 +642,12 @@ impl Bundle for Bundled {
         // The contract the gateway feature resolves. Nothing outside this crate
         // may name `Clerk`, and nothing outside it needs to.
         //
-        // `Docket` is deliberately absent from `requires`: a `Shared` binding
-        // that declared a `Scoped` one is a phase-three lifetime conflict, and
-        // the clerk reaches its docket through a scope, where no such
-        // declaration is possible or wanted.
+        // `Docket` is absent from `requires` and present in
+        // `requires_scoped`: a `Shared` binding that declared a `Scoped` one
+        // there is a phase-three lifetime conflict. The clerk keeps the
+        // container it was built against and opens a scope per request, so the
+        // container it kept is checked against `requires` and the scope it
+        // opens against `requires_scoped`.
         registry.provide(
             Provider::from_fn(|container| {
                 Box::pin(async move {
@@ -640,7 +662,8 @@ impl Bundle for Bundled {
                     }) as Arc<dyn Handler>)
                 })
             })
-            .requires([ContractRef::of::<dyn WorkQueue>()]),
+            .requires([ContractRef::of::<dyn WorkQueue>()])
+            .requires_scoped([ContractRef::of::<Docket>()]),
         );
 
         registry.runnable(
@@ -914,10 +937,10 @@ mod tests {
     }
 
     /// The claim the whole example rests on, at this crate's own door: the
-    /// runnable is what sees `Draining`, and what it does with it is stop
-    /// admitting while it keeps working.
+    /// bench shuts itself on the drain rung, and the hand keeps working what
+    /// was already admitted.
     #[tokio::test]
-    async fn hand_closes_at_drain() {
+    async fn bench_closes_at_drain() {
         let bench = bench(2);
         let (cx, controller): (RunContext, ShutdownController) = RunContext::detached();
         let hand = Arc::new(Hand {
@@ -926,14 +949,23 @@ mod tests {
         });
         let running = tokio::spawn(Arc::clone(&hand).run(cx));
 
-        // Admitted before the ladder moves, and answered after it: the window.
+        // Admitted before the rung is walked, and answered after it: the window.
         let ticket = bench.submit(Job::new("held")).expect("room");
+
+        // What the kernel does on that rung, in the order it does it: the
+        // ladder moves, and every component is told to refuse new work. The
+        // hand watches the first; the door is shut by the second.
         controller.begin_draining();
+        let (stopping, _second) = ShutdownContext::detached();
+        bench
+            .drain(&stopping.context())
+            .await
+            .expect("shutting the door cannot fail");
+
         let done = bounded(ticket).await.expect("work in flight finishes");
         assert_eq!(done.line, "held");
 
         // The door is shut, and it says so as `Closed` rather than as `Full`.
-        until(|| bench.submit(Job::new("late")).is_err()).await;
         assert_eq!(
             bench.submit(Job::new("late")).expect_err("shut"),
             Refusal::Closed

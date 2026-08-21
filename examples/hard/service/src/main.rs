@@ -27,26 +27,27 @@
 //!
 //! # The one thing to take away, which the design document does not say
 //!
-//! **A component cannot react to `Draining`, so an acceptor must be a
-//! runnable.**
+//! **The door is shut by whoever owns it; the window is held open by whoever
+//! owns the work in flight.**
 //!
-//! A [`Component`](kernel::Component) is handed its `ShutdownContext` when the
-//! kernel comes to stop it, and the kernel stops components *after every
-//! runnable has already returned*. By then the drain window is over. A
-//! component therefore never observes `Draining` at all — it observes the end,
-//! which is a different fact and arrives too late to refuse anything with.
+//! A [`Component`](kernel::Component) has three moments, not two:
+//! [`boot`](kernel::Component::boot), [`drain`](kernel::Component::drain) — run
+//! as the ladder reaches `Draining`, before a single runnable has been asked to
+//! wind down — and [`shutdown`](kernel::Component::shutdown). Refusing new work
+//! is a property of the RESOURCE, so it happens in the middle one: the gateway's
+//! socket closes itself there, and the worker's queue closes itself there.
+//! Neither needs a loop or a task to do it.
 //!
-//! Only a [`Runnable`](kernel::Runnable) is handed a `RunContext`, and only a
-//! `RunContext` carries the token whose two rungs separate *stop taking new
-//! work* from *stop now*. So the accept loop is a runnable, necessarily — not
-//! by taste, and not by convention: there is no other unit that can see the
-//! ladder move.
+//! What a component never holds is the work already accepted. Giving that work
+//! the drain window and cutting what outlives it needs the token whose two
+//! rungs separate *stop taking new work* from *stop now*, and needs the set of
+//! tasks those rungs apply to. Only a [`Runnable`](kernel::Runnable) has both —
+//! so the accept loop is a runnable, necessarily, and so is the hand that works
+//! the bench.
 //!
-//! What stays a component is the *resource*. A socket is bound once, ordered
-//! against the rest of the boot graph, and released once, and none of that
-//! needs the ladder. Bind in the component, accept in the runnable. The same
-//! split appears one layer in: the worker's queue is a plain bound value and
-//! the runnable that works it is what closes its door at `Draining`.
+//! Bind and shut in the component, accept and wind down in the runnable. The
+//! split is not taste and not convention: it follows from which unit owns which
+//! thing.
 //!
 //! # Running it
 //!
@@ -115,20 +116,15 @@
 //!
 //! Written down because it is worth more than the code that works around it:
 //!
-//! * **The shutdown policy cannot come from the kernel's own configuration.**
-//!   [`KernelBuilder::shutdown_policy`](kernel::KernelBuilder::shutdown_policy)
-//!   is a builder input and the tree is loaded during `build`, so an
-//!   application that wants configurable budgets must build and load a
-//!   [`ConfigChain`](kernel::ConfigChain) of its own first and pass the same
-//!   sources twice. The budgets below are constants for that reason.
 //! * **Nothing publishes "this request has been admitted".** The script waits a
 //!   fixed moment before asking for the stop. A test can assert the outcome
 //!   instead of the timing, but a demonstration cannot, and there is no public
 //!   edge to wait on.
-//! * **The stage is not readable from outside a runnable.** `Draining` is
-//!   observable here only because this feature's component happens to publish
-//!   `is_open`; an application with no such component would have to listen for
-//!   the event and remember it.
+//! * **A bundle cannot shorten the drain budget for its own component.** A
+//!   [`ComponentDescriptor`](kernel::ComponentDescriptor) carries
+//!   `shutdown_timeout` but no `drain_timeout`, so every component's drain is
+//!   bounded by the policy's `drain` flat. Nothing here needs less; a component
+//!   whose refusal is expensive would have no way to say so.
 
 mod caller;
 mod console;
@@ -168,6 +164,15 @@ const DEMO: &str = "app.demo";
 /// that is always sufficient is a budget nobody is enforcing.
 const LADDER: ShutdownPolicy =
     ShutdownPolicy::new(Duration::from_millis(1_000), Duration::from_millis(1_000));
+
+/// Where an operator may override [`LADDER`], key by key.
+///
+/// `HARD_LADDER__DRAIN=3s` moves the drain window and leaves the stop budget
+/// where the constant put it. Read out of the same tree every other key comes
+/// from — the budgets are an operational setting like any other, and pinning
+/// them in the binary would make them the one setting a deployment could not
+/// touch.
+const LADDER_AT: &str = "ladder";
 
 /// The values this application ships with.
 ///
@@ -267,6 +272,7 @@ async fn run() -> ExitCode {
     let kernel = match Kernel::builder()
         .telemetry(Arc::new(StderrTelemetry))
         .shutdown_policy(LADDER)
+        .shutdown_policy_at(LADDER_AT)
         .config_source(defaults())
         .config_source(EnvSource::with_prefix(PREFIX))
         .bundle(gateway_bundle::GatewayBundle::new())

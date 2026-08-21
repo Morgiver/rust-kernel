@@ -32,10 +32,12 @@
 //! the same one the two-stage shutdown makes — refuse new work, finish held
 //! work — expressed at the door of a queue instead of at the door of a socket.
 //!
-//! It is also why the unit that watches the ladder is a runnable and not a
-//! component: a component is only handed its shutdown context after every
-//! runnable has already stopped, so it never observes the drain window it
-//! would need to close this queue at the right moment.
+//! It is also why the queue's two refusals are the queue's own: the unit that
+//! implements this contract is told to drain — as the ladder reaches
+//! `Draining`, before any runnable has been asked to wind down — and shutting
+//! its own door there is what turns [`Refusal::Full`] into
+//! [`Refusal::Closed`]. Nothing in this crate names that hook; the point here
+//! is only that the two refusals mean different things to a caller.
 
 use core::fmt;
 use core::future::Future;

@@ -204,7 +204,16 @@ async fn run() -> ExitCode {
     }
 
     // Phases four to seven: build, boot, run, drain, stop.
-    let outcome = kernel.run().await;
+    //
+    // `ran` rather than `run`: the verdict alone cannot report a failure the
+    // run RECOVERED from. This application's audit runnable fails twice on
+    // purpose and is restarted both times, so a clean `ShutdownRequested`
+    // hides two real errors. `Ending::errors` is where they are.
+    let ending = kernel.ran().await;
+    for error in ending.errors() {
+        eprintln!("app: recovered: {error}");
+    }
+    let outcome = ending.into_outcome();
     if let Some(error) = outcome.error() {
         eprintln!("app: {error}");
     }

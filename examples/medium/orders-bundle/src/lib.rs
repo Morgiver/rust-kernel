@@ -844,7 +844,12 @@ impl Bundle for Bundled {
             .requires([
                 ContractRef::of::<dyn OrderBook>(),
                 ContractRef::named::<dyn Sink>(ARCHIVE),
-            ]),
+            ])
+            // What one batch resolves, not what the desk is built from: the
+            // slip lives in the scope `Desk::batch` opens, so phase three
+            // checks it is provided and `Scoped`, and the debug guard checks
+            // the batch resolves nothing else.
+            .requires_scoped([ContractRef::of::<Slip>()]),
         );
 
         Ok(())

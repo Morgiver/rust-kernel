@@ -24,7 +24,7 @@
 //! # Aggregation, not first failure
 //!
 //! Every check collects. A start-up that reveals one error at a time, six times
-//! in a row, is a tooling defect, so all eleven checks run over the whole
+//! in a row, is a tooling defect, so all twelve checks run over the whole
 //! registry and the violations come back together in one
 //! [`Vec<ResolveError>`](ResolveError). The order is deterministic: checks run
 //! in a fixed sequence and each one walks its input in registration order.
@@ -45,6 +45,11 @@
 //! same way — but it induces no edge. A listener resolves while an event is
 //! dispatched, long after every binding has been built, so it can be no part of
 //! a build-time cycle and orders nothing against anything.
+//!
+//! A unit's *scoped* declaration induces no edge either, for the same reason at
+//! a different moment: nothing in it is resolved while the unit is built, so
+//! nothing in it can order the build. It is checked — every entry must be
+//! provided, and provided `Scoped` — and it stays out of the graph.
 
 use core::any::TypeId;
 use core::fmt;
@@ -148,11 +153,18 @@ pub struct Resolved {
 /// 11. [`LifetimeConflict`] — a requirer that is not itself `Scoped` and
 ///     requires a `Scoped` binding, which no scope can ever satisfy. Every
 ///     non-`Scoped` binding and every listener is a requirer here.
+/// 12. [`ScopeMismatch`] — a contract a unit declares it resolves inside the
+///     scope it opens, bound under a lifetime that is not `Scoped`. The unit
+///     would open a scope and receive a process-wide value.
 ///
-/// A requirement is declared by a provider, by a listener or by a manifest, and
-/// checks 1, 6 and 11 read the listeners too: a listener that resolves during
-/// dispatch is checked here or nowhere.
+/// A requirement is declared by a provider — for its build or for the unit of
+/// work it opens a scope for — by a listener or by a manifest. Checks 1, 6 and
+/// 11 read the listeners too: a listener that resolves during dispatch is
+/// checked here or nowhere. Checks 1, 6 and 12 read the scoped declarations for
+/// the same reason: a per-request resolution is checked here or on the first
+/// request in production.
 ///
+/// [`ScopeMismatch`]: ResolveError::ScopeMismatch
 /// [`BundleCycle`]: ResolveError::BundleCycle
 /// [`BundleOutOfOrder`]: ResolveError::BundleOutOfOrder
 /// [`LifetimeConflict`]: ResolveError::LifetimeConflict
@@ -207,6 +219,7 @@ pub fn resolve(
     bundle_cycles(manifests, &mut errors);
     duplicate_bundles(manifests, &mut errors);
     lifetime_conflicts(&parts, &index, &mut errors);
+    scope_mismatches(&parts, &index, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -310,6 +323,10 @@ fn holds_default(entry: &BindingEntry) -> bool {
 /// Listeners are read here because they are read nowhere else. What a listener
 /// resolves happens during dispatch, so a requirement it does not declare is a
 /// failure on every event and never a failure of the graph.
+///
+/// A binding's scoped declaration is read for the same reason: what a unit of
+/// work resolves happens per request, so a contract nothing provides is
+/// invisible until the first one.
 fn missing_contracts(
     parts: &RegistryParts,
     manifests: &[BundleManifest],
@@ -319,7 +336,11 @@ fn missing_contracts(
     let mut seen: HashSet<(&'static str, ContractId)> = HashSet::new();
 
     for entry in &parts.bindings {
-        for contract in &entry.requires {
+        // Both moments the unit resolves at: what its build asks for, and what
+        // the unit of work it opens a scope for asks for. A contract nothing
+        // provides is the same defect in either list -- the second one simply
+        // fails later, on the first request rather than on the boot.
+        for contract in entry.requires.iter().chain(&entry.requires_scoped) {
             missing_one(
                 entry.contract.type_name(),
                 *contract,
@@ -523,7 +544,9 @@ fn undeclared_points(parts: &RegistryParts, errors: &mut Vec<ResolveError>) {
 /// The listeners are read for the same reason check 1 reads them: a contract a
 /// listener resolves during dispatch is a contract the bundle needs, declared
 /// where it is resolved. A bundle whose only consumer of a contract is a
-/// listener would otherwise be unable to name it in its manifest at all.
+/// listener would otherwise be unable to name it in its manifest at all, and
+/// the same holds for a bundle whose only consumer resolves it per request:
+/// both declarations count as asking.
 fn manifest_mismatches(
     parts: &RegistryParts,
     manifests: &[BundleManifest],
@@ -541,6 +564,7 @@ fn manifest_mismatches(
             .filter(|entry| entry.bundle == manifest.name)
         {
             asked.extend(entry.requires.iter().map(ContractRef::id));
+            asked.extend(entry.requires_scoped.iter().map(ContractRef::id));
         }
         // A listener's declaration counts too. It is a requirement of the
         // bundle exactly as a provider's is — phase three checks both the same
@@ -707,6 +731,13 @@ fn duplicate_bundles(manifests: &[BundleManifest], errors: &mut Vec<ResolveError
 /// contract, and reporting it twice would turn one defect into two. `Factory`
 /// and `Scoped` requirers are left alone — a factory value is built wherever it
 /// is asked for, and a scoped one is already inside a scope.
+///
+/// Only `Provider::requires` is read. A scoped binding named in
+/// `Provider::requires_scoped` is not reached by the build at all — it is
+/// reached inside the scope the built unit opens, where it is exactly what
+/// belongs — so it is no conflict, and it is check 12 that judges it. This
+/// check exists to catch a unit reaching a scoped binding by accident; a unit
+/// that says it will is not that unit.
 fn lifetime_conflicts(parts: &RegistryParts, index: &BindingIndex, errors: &mut Vec<ResolveError>) {
     for entry in &parts.bindings {
         // A scoped binding is the one requirer a scoped requirement is
@@ -762,6 +793,53 @@ fn scoped_needs(
                 requires: *contract,
                 bundle,
             });
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
+// 12. Scoped requirements
+// --------------------------------------------------------------------------
+
+/// Every contract a unit resolves inside its own scope that is not bound
+/// `Scoped`.
+///
+/// The declaration exists because a unit of work resolves per request, long
+/// after phase three could have watched it, and it means one thing: this is
+/// resolved inside the scope this unit opens. A binding that is not `Scoped`
+/// does not answer that. A `Shared` one is built once for the whole process, so
+/// every request would receive the same value and the scope would buy nothing —
+/// which is the failure the declaration was invented to make visible, and it is
+/// silent in production because nothing errors: the wrong value simply arrives.
+/// A `Factory` one is rebuilt on every resolution, so two resolutions inside one
+/// request would not even agree with each other.
+///
+/// A contract nothing satisfies contributes nothing here: it is already a
+/// missing contract, and reporting it twice would turn one defect into two.
+///
+/// Unlike a build requirement, this is checked whatever the requirer's own
+/// lifetime. A scope is opened by the unit, not by the container the unit was
+/// built in, so a `Shared` unit and a `Scoped` one open the same kind of scope
+/// and reach the same kind of binding through it.
+fn scope_mismatches(parts: &RegistryParts, index: &BindingIndex, errors: &mut Vec<ResolveError>) {
+    for entry in &parts.bindings {
+        let mut seen: HashSet<ContractId> = HashSet::new();
+        for contract in &entry.requires_scoped {
+            let Some(target) = index.target(contract) else {
+                continue;
+            };
+            let lifetime = parts.bindings[target].lifetime;
+            if lifetime == Lifetime::Scoped {
+                continue;
+            }
+            if seen.insert(contract.id()) {
+                errors.push(ResolveError::ScopeMismatch {
+                    required_by: entry.contract.type_name(),
+                    requires: *contract,
+                    lifetime,
+                    bundle: entry.bundle,
+                });
+            }
         }
     }
 }
@@ -1081,6 +1159,7 @@ mod tests {
                 ResolveError::BundleCycle { .. } => "bundle-cycle",
                 ResolveError::DuplicateBundle { .. } => "duplicate-bundle",
                 ResolveError::LifetimeConflict { .. } => "lifetime",
+                ResolveError::ScopeMismatch { .. } => "scope",
             })
             .collect()
     }
@@ -1188,7 +1267,7 @@ mod tests {
     // `kinds` matches exhaustively, so a check added without a line here does
     // not compile.
     #[test]
-    fn aggregates_all_eleven() {
+    fn aggregates_all_twelve() {
         static ONE_REQUIRES: [ContractRef; 1] = [ContractRef::of::<dyn Beta>()];
         static AFTER_TWO: [&str; 1] = ["two"];
         static AFTER_ONE: [&str; 2] = ["one", "absent"];
@@ -1214,9 +1293,14 @@ mod tests {
         registry.provide_named("primary", gamma());
         // 5. a contribution to a point nobody declared.
         registry.contribute(Item);
-        // 10. a shared binding that requires a scoped one.
+        // 11. a shared binding that requires a scoped one.
         registry.provide(delta().lifetime(Lifetime::Scoped));
         registry.provide_named("keeper", beta().requires([ContractRef::of::<dyn Delta>()]));
+        // 12. a unit whose scope resolves a binding that is not scoped.
+        registry.provide_named(
+            "opener",
+            gamma().requires_scoped([ContractRef::of::<dyn Alpha>()]),
+        );
         // 6. `one` declares a requirement none of its providers states.
         // 7. `two` orders itself after a bundle that is not registered.
         // 8. `one` is registered before `two`, which it orders itself after.
@@ -1224,7 +1308,7 @@ mod tests {
         // 10. a third manifest registers the name `one` a second time.
 
         let errors =
-            resolve(registry, &[ONE, TWO, ONE_AGAIN]).expect_err("eleven violations were planted");
+            resolve(registry, &[ONE, TWO, ONE_AGAIN]).expect_err("twelve violations were planted");
 
         assert_eq!(
             kinds(&errors),
@@ -1240,6 +1324,7 @@ mod tests {
                 "bundle-cycle",
                 "duplicate-bundle",
                 "lifetime",
+                "scope",
             ],
             "{:?}",
             rendered(&errors)
@@ -1873,6 +1958,174 @@ mod tests {
         let errors = resolve(registry, &[]).expect_err("nothing provides Alpha");
 
         assert_eq!(kinds(&errors), ["missing"]);
+    }
+
+    // ------------------------------------------------------------------
+    // 12. What a unit of work declares
+    // ------------------------------------------------------------------
+
+    // The gap this check closes: a unit that opens a scope per request
+    // resolves there, so a contract nothing provides passes phase three, boots,
+    // and then fails on every request.
+    #[test]
+    fn scoped_need_must_exist() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha().requires_scoped([ContractRef::of::<dyn Gamma>()]));
+
+        let errors = resolve(registry, &[]).expect_err("nothing provides Gamma");
+
+        match &errors[..] {
+            [
+                ResolveError::MissingContract {
+                    required_by,
+                    contract,
+                },
+            ] => {
+                assert!(required_by.ends_with("Alpha"), "{required_by}");
+                assert!(contract.type_name().ends_with("Gamma"), "{contract:?}");
+            }
+            other => panic!("expected one missing contract, got {other:?}"),
+        }
+    }
+
+    // The other half: the contract exists, and is process-wide. The unit would
+    // open a scope and be handed the same value every request -- silently,
+    // because nothing errors.
+    #[test]
+    fn scoped_need_must_scope() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(beta());
+        registry.provide(alpha().requires_scoped([ContractRef::of::<dyn Beta>()]));
+
+        let errors = resolve(registry, &[]).expect_err("Beta is shared");
+
+        match &errors[..] {
+            [
+                ResolveError::ScopeMismatch {
+                    required_by,
+                    requires,
+                    lifetime,
+                    bundle,
+                },
+            ] => {
+                assert!(required_by.ends_with("Alpha"), "{required_by}");
+                assert!(requires.type_name().ends_with("Beta"), "{requires:?}");
+                assert_eq!(*lifetime, Lifetime::Shared);
+                assert_eq!(*bundle, "one");
+            }
+            other => panic!("expected one scope mismatch, got {other:?}"),
+        }
+        assert!(
+            rendered(&errors)[0].contains("in a scope, but it is bound shared"),
+            "{:?}",
+            rendered(&errors)
+        );
+    }
+
+    // A factory is a fresh value on every resolution, so two resolutions inside
+    // one unit of work disagree. That is not what a scope is for either.
+    #[test]
+    fn factory_is_not_scoped() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(beta().lifetime(Lifetime::Factory));
+        registry.provide(alpha().requires_scoped([ContractRef::of::<dyn Beta>()]));
+
+        let errors = resolve(registry, &[]).expect_err("Beta is a factory");
+
+        assert_eq!(kinds(&errors), ["scope"], "{:?}", rendered(&errors));
+    }
+
+    // The declaration the gap exists to enable: named here rather than in
+    // `requires`, a scoped contract closes the graph instead of being reported
+    // as a lifetime conflict.
+    #[test]
+    fn scoped_need_is_declarable() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(beta().lifetime(Lifetime::Scoped));
+        registry.provide(alpha().requires_scoped([ContractRef::of::<dyn Beta>()]));
+
+        assert!(resolve(registry, &[]).is_ok());
+    }
+
+    // The same contract in `requires` is the conflict this check does not
+    // report, which is what makes the two lists worth having.
+    #[test]
+    fn build_need_still_conflicts() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(beta().lifetime(Lifetime::Scoped));
+        registry.provide(alpha().requires([ContractRef::of::<dyn Beta>()]));
+
+        let errors = resolve(registry, &[]).expect_err("a shared build requires a scoped binding");
+
+        assert_eq!(kinds(&errors), ["lifetime"], "{:?}", rendered(&errors));
+    }
+
+    // A scoped requirement is checked against the binding it actually reaches,
+    // exactly as a build requirement is.
+    #[test]
+    fn scoped_need_follows_name() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(beta().lifetime(Lifetime::Scoped));
+        registry.provide_named("keeper", beta());
+        registry.provide(alpha().requires_scoped([ContractRef::named::<dyn Beta>("keeper")]));
+
+        let errors = resolve(registry, &[]).expect_err("the named binding is shared");
+
+        assert_eq!(kinds(&errors), ["scope"], "{:?}", rendered(&errors));
+    }
+
+    // Nothing in the scoped list is resolved while the unit is built, so
+    // nothing in it can order the build or close a build-time cycle.
+    #[test]
+    fn scoped_need_adds_no_edge() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(
+            alpha()
+                .lifetime(Lifetime::Scoped)
+                .requires_scoped([ContractRef::of::<dyn Beta>()]),
+        );
+        registry.provide(
+            beta()
+                .lifetime(Lifetime::Scoped)
+                .requires_scoped([ContractRef::of::<dyn Alpha>()]),
+        );
+
+        assert!(resolve(registry, &[]).is_ok());
+    }
+
+    // One defect, one line: a contract nothing provides is a missing contract
+    // and not also a scope mismatch.
+    #[test]
+    fn missing_is_not_mismatch() {
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(alpha().requires_scoped([ContractRef::of::<dyn Beta>()]));
+
+        let errors = resolve(registry, &[]).expect_err("nothing provides Beta");
+
+        assert_eq!(kinds(&errors), ["missing"]);
+    }
+
+    // A bundle whose only consumer of a contract resolves it per request can
+    // still say so in its manifest: the declaration is the bundle asking.
+    #[test]
+    fn manifest_reads_scoped_need() {
+        static REQUIRES: [ContractRef; 1] = [ContractRef::of::<dyn Beta>()];
+        static ONE: BundleManifest = BundleManifest::new("one", "0.1.0").requires(&REQUIRES);
+
+        let mut registry = registry();
+        registry.enter_bundle("one");
+        registry.provide(beta().lifetime(Lifetime::Scoped));
+        registry.provide(alpha().requires_scoped([ContractRef::of::<dyn Beta>()]));
+
+        assert!(resolve(registry, &[ONE]).is_ok());
     }
 
     // ------------------------------------------------------------------

@@ -21,21 +21,24 @@
 //! This is the one thing to take away from the example this crate belongs to,
 //! and the design document does not say it.
 //!
-//! A component is handed its shutdown context only when the kernel comes to
-//! stop it, and that happens *after* every runnable has already stopped. By
-//! then the drain window is over. A component therefore cannot react to
-//! `Draining` at all: it never observes the stage, it only observes the end.
+//! The split is not "who can see the ladder" — both units can. It is *what
+//! each one owns*.
 //!
-//! So the accept loop cannot be a component. Only a runnable holds a
-//! `RunContext`, and only a `RunContext` carries the shutdown token that
-//! distinguishes *stop taking new work* from *stop now*. The loop that must
-//! stop accepting at `Draining` and finish what it already accepted before
-//! `Stopping` is a runnable, necessarily.
+//! The **socket** is a resource: bound at boot, ordered against everything else
+//! the boot graph orders, refused-into at `Draining`, released at the end. All
+//! four of those are a component's moments, the third one included — a
+//! component is told to drain before any runnable has been asked to wind down,
+//! which is exactly when the refusal has to start. So the door is shut by
+//! whoever owns it.
 //!
-//! What may still be a component is the *resource*: the socket bound at boot
-//! and released at shutdown, ordered against everything else the boot graph
-//! orders. Bind in the component, accept in the runnable. The split is not
-//! ceremony — it follows from which unit is allowed to see the ladder move.
+//! The **accept loop** owns something a component never holds: the requests it
+//! has already accepted. Giving those the drain window and cutting what
+//! outlives it needs the token whose two rungs distinguish *stop taking new
+//! work* from *stop now*, and needs the set of tasks those rungs apply to. Only
+//! a runnable has both. So the loop is a runnable, necessarily.
+//!
+//! Bind and shut in the component, accept and wind down in the runnable. The
+//! split is not ceremony — it follows from which unit owns which thing.
 //!
 //! # The wire format is not a contract
 //!

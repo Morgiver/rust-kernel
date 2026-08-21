@@ -21,14 +21,22 @@
 //!
 //! Runnables are never ordered against each other. They all start after the
 //! last component has booted, and one runnable may not depend on another.
+//!
+//! A runnable that fans work out onto tasks of its own owes that work the same
+//! two-stage ending it owes the kernel, and [`Children`] is that ending
+//! written once: it refuses new children while draining, lets the ones in
+//! flight finish, and cuts whatever outlives the stopping budget.
 
 use core::fmt;
+use core::future::Future;
 use std::sync::Arc;
+use std::time::Instant;
 
 use kernel_core::{
     BoxFuture, ConfigTree, NoopTelemetry, RunError, RunnableDescriptor, RunnableId, ShutdownPolicy,
-    Telemetry,
+    Stage, Telemetry,
 };
+use tokio::task::JoinSet;
 
 use crate::container::Container;
 use crate::dispatcher::EventDispatcher;
@@ -157,6 +165,10 @@ pub struct RunContext {
     dispatcher: Arc<EventDispatcher>,
     shutdown: Shutdown,
     handle: KernelHandle,
+    /// The bounds this run was started under. Read by
+    /// [`deadline`](RunContext::deadline), which is the only thing that needs
+    /// them: they are the runnable's own declaration, not the ladder's.
+    descriptor: RunnableDescriptor,
 }
 
 impl RunContext {
@@ -164,6 +176,17 @@ impl RunContext {
     ///
     /// The supervisor calls this once per start, so a restarted runnable gets a
     /// fresh context watching the same token.
+    ///
+    /// It also binds `handle` to the ladder `shutdown` reads, so that a unit
+    /// holding nothing but the handle — the only end of the lifecycle an
+    /// arbitrary unit can resolve — reads the STAGE rather than a boolean. The
+    /// binding happens once: the first ladder wins and a later one changes
+    /// nothing, so the second ladder a shutdown walk opens for its own units
+    /// cannot redefine what the process reports.
+    ///
+    /// The context carries no bounds of its own until
+    /// [`with_descriptor`](Self::with_descriptor) names them, and
+    /// [`deadline`](Self::deadline) then reports the ladder's.
     pub fn new(
         id: RunnableId,
         container: Container,
@@ -171,13 +194,27 @@ impl RunContext {
         shutdown: Shutdown,
         handle: KernelHandle,
     ) -> Self {
+        shutdown.attach(&handle);
         Self {
             id,
             container,
             dispatcher,
             shutdown,
             handle,
+            descriptor: RunnableDescriptor::new(),
         }
+    }
+
+    /// The same context, bounded the way this runnable's descriptor asks.
+    ///
+    /// What the supervisor names before it starts a runnable: the budgets a
+    /// [`RunnableDescriptor`] declares are the runnable's own, and
+    /// [`deadline`](Self::deadline) cannot report them unless the context is
+    /// told what they are.
+    #[must_use]
+    pub fn with_descriptor(mut self, descriptor: RunnableDescriptor) -> Self {
+        self.descriptor = descriptor;
+        self
     }
 
     /// The container.
@@ -218,6 +255,67 @@ impl RunContext {
     #[must_use]
     pub fn handle(&self) -> &KernelHandle {
         &self.handle
+    }
+
+    /// The instant this runnable's own budget for the current stage lands on.
+    ///
+    /// # The ladder says which stage, this says how long
+    ///
+    /// [`shutdown`](Self::shutdown) reports WHICH STAGE the kernel is in, and
+    /// [`Shutdown::deadline`] is when that stage ends for everybody.
+    /// This one is a property of the UNIT: the start of the current stage plus
+    /// the budget this runnable's own
+    /// [`RunnableDescriptor`] declared for it, never later than the ladder's —
+    /// a descriptor may shorten a stage, never extend it. A runnable that
+    /// declared no budget for the stage in hand is bounded by the ladder alone,
+    /// and reads the same instant either way.
+    ///
+    /// This is the arithmetic it exists to stop a runnable doing: recomputing
+    /// its own bound from the start of the stage is exactly the calculation a
+    /// component was found getting wrong, and reading the ladder's where its
+    /// own was meant makes it hurry for a deadline nobody is enforcing on it.
+    ///
+    /// `None` while [`Stage::Running`] and once [`Stage::Stopped`]: neither
+    /// stage is timed and neither bounds this runnable. It is not a promise of
+    /// endless time — see [`Shutdown::deadline`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use core::time::Duration;
+    /// # use kernel::RunContext;
+    /// # use kernel::core::RunnableDescriptor;
+    /// # async fn probe() {
+    /// let (cx, controller) = RunContext::builder()
+    ///     .with_descriptor(RunnableDescriptor::new().stop_timeout(Duration::from_secs(1)))
+    ///     .build();
+    ///
+    /// assert_eq!(cx.deadline(), None);
+    /// controller.begin_stopping();
+    ///
+    /// // One second, not the twenty the ladder grants the process.
+    /// let own = cx.deadline().expect("the stage is timed");
+    /// assert!(own < cx.shutdown().deadline().expect("so is the ladder"));
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn deadline(&self) -> Option<Instant> {
+        let own = match self.shutdown.stage() {
+            Stage::Draining => self.descriptor.drain_timeout,
+            Stage::Stopping => self.descriptor.stop_timeout,
+            Stage::Running | Stage::Stopped => None,
+        };
+        let own = own.and_then(|budget| {
+            self.shutdown
+                .entered()
+                .and_then(|entered| entered.checked_add(budget))
+        });
+
+        match (own, self.shutdown.deadline()) {
+            (Some(own), Some(ladder)) => Some(own.min(ladder)),
+            (Some(only), None) | (None, Some(only)) => Some(only),
+            (None, None) => None,
+        }
     }
 
     /// The identity this run is recorded under.
@@ -288,6 +386,7 @@ pub struct RunBuilder {
     handle: Option<KernelHandle>,
     extensions: Option<Arc<ExtensionPoints>>,
     policy: ShutdownPolicy,
+    descriptor: RunnableDescriptor,
 }
 
 impl RunBuilder {
@@ -304,6 +403,7 @@ impl RunBuilder {
             handle: None,
             extensions: None,
             policy: ShutdownPolicy::default(),
+            descriptor: RunnableDescriptor::new(),
         }
     }
 
@@ -380,6 +480,17 @@ impl RunBuilder {
         self
     }
 
+    /// Bound the run the way this descriptor asks.
+    ///
+    /// What [`RunContext::deadline`] reports the runnable's own bound from. A
+    /// test of a runnable that hurries for its own budget has to be able to
+    /// give the context the budget the supervisor would have given it.
+    #[must_use]
+    pub fn with_descriptor(mut self, descriptor: RunnableDescriptor) -> Self {
+        self.descriptor = descriptor;
+        self
+    }
+
     /// Assembles the context, and opens the ladder that drives it.
     #[must_use]
     pub fn build(self) -> (RunContext, ShutdownController) {
@@ -392,6 +503,7 @@ impl RunBuilder {
             handle,
             extensions,
             policy,
+            descriptor,
         } = self;
 
         let (controller, shutdown) = ShutdownController::new(policy);
@@ -435,7 +547,11 @@ impl RunBuilder {
             dispatcher,
             shutdown,
             handle,
+            descriptor,
         };
+        // Same binding the supervisor's context makes: a test reading the
+        // stage off the handle reads what it would read under a kernel.
+        controller.attach(&context.handle);
 
         (context, controller)
     }
@@ -462,6 +578,271 @@ impl fmt::Debug for RunContext {
             .field("id", &self.id)
             .field("stage", &self.shutdown.stage())
             .finish_non_exhaustive()
+    }
+}
+
+/// Child work run under the shutdown ladder, and bounded by it.
+///
+/// A runnable that fans work out onto tasks of its own owes that work the same
+/// two-stage ending it owes itself, and the shape of that ending is always the
+/// same: refuse new children once the ladder drains, let the ones in flight
+/// finish, and cut whatever outlives the stopping budget. Written by hand it is
+/// sixty lines with four ways to get it wrong — a select that is not biased, a
+/// reap loop that ends one child early, a deadline read from the wrong clock,
+/// a cut that never happens because the stage was untimed.
+///
+/// It knows nothing about what the children do. It spawns futures, counts
+/// them, and ends them; whatever a child is holding is the child's business.
+///
+/// # Fan-out is bounded here or nowhere
+///
+/// Nothing else bounds it: the kernel supervises runnables, not the tasks a
+/// runnable spawns. [`with_limit`](Self::with_limit) is where a caller says how
+/// many children may be in flight at once, and [`spawn`](Self::spawn) refuses
+/// past it rather than queueing — a refusal the caller can answer, where an
+/// unbounded set of tasks is a process that dies with no answer at all.
+///
+/// # Examples
+///
+/// The shape a unit that takes work in and hands it to a task per item needs:
+///
+/// ```
+/// use core::time::Duration;
+/// use std::sync::Arc;
+///
+/// use kernel::{BoxFuture, Children, RunContext, Runnable, RunnableDescriptor};
+/// use kernel::core::RunError;
+///
+/// /// Stands in for whatever this runnable takes its work from.
+/// async fn next_item() -> u32 {
+///     tokio::time::sleep(Duration::from_millis(1)).await;
+///     7
+/// }
+///
+/// struct Accepting;
+///
+/// impl Runnable for Accepting {
+///     fn name() -> &'static str {
+///         "accepting"
+///     }
+///
+///     fn descriptor(&self) -> RunnableDescriptor {
+///         RunnableDescriptor::new()
+///     }
+///
+///     fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
+///         Box::pin(async move {
+///             let mut children = Children::new(cx.shutdown().clone()).with_limit(512);
+///
+///             loop {
+///                 tokio::select! {
+///                     biased;
+///                     // Draining: refuse new work, keep what is in flight.
+///                     () = cx.shutdown().draining() => break,
+///                     item = next_item() => {
+///                         let spawned = children.spawn(async move {
+///                             let _ = item;
+///                         });
+///                         if !spawned.is_started() {
+///                             // Over the limit, or the ladder moved under us:
+///                             // this is where the work is turned away.
+///                             break;
+///                         }
+///                     }
+///                 }
+///             }
+///
+///             // What is in flight finishes; what outlives the stopping
+///             // budget is cut.
+///             let cut = children.finish().await;
+///             assert_eq!(cut, 0);
+///             Ok(())
+///         })
+///     }
+/// }
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()
+///     .unwrap();
+///
+/// runtime.block_on(async {
+///     let (cx, controller) = RunContext::detached();
+///     let task = tokio::spawn(Arc::new(Accepting).run(cx));
+///
+///     controller.begin_stopping();
+///
+///     task.await.unwrap().unwrap();
+/// });
+/// ```
+pub struct Children {
+    shutdown: Shutdown,
+    tasks: JoinSet<()>,
+    limit: Option<usize>,
+}
+
+impl Children {
+    /// A set with no children and no bound on how many there may be.
+    ///
+    /// The ladder is the one the parent watches — under a kernel,
+    /// `cx.shutdown().clone()`.
+    #[must_use]
+    pub fn new(shutdown: Shutdown) -> Self {
+        Self {
+            shutdown,
+            tasks: JoinSet::new(),
+            limit: None,
+        }
+    }
+
+    /// Refuse a child once `limit` of them are already in flight.
+    ///
+    /// A limit of zero refuses every child, which is a way of saying the fan-out
+    /// is closed rather than an error.
+    #[must_use]
+    pub fn with_limit(mut self, limit: usize) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    /// Starts one child, unless the ladder or the limit refuses it.
+    ///
+    /// Refused while the ladder is anywhere but [`Stage::Running`]: draining
+    /// means *no new work*, and a child started after that is work the stop was
+    /// meant to have refused. Refused again once the limit is reached. Either
+    /// way nothing is spawned and the future is dropped, so a caller that has
+    /// something to answer — a reply, a rejection, a counter — reads which of
+    /// the two it was.
+    ///
+    /// Must be called from inside a runtime: the child is spawned onto the
+    /// current one.
+    pub fn spawn<F>(&mut self, work: F) -> Spawned
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        // Freeing what has already finished is what makes the limit a limit on
+        // work in flight rather than on work ever done.
+        self.reap();
+
+        if self.shutdown.stage().is_shutting_down() {
+            return Spawned::Draining;
+        }
+        if self.limit.is_some_and(|limit| self.tasks.len() >= limit) {
+            return Spawned::AtLimit;
+        }
+
+        self.tasks.spawn(work);
+        Spawned::Started
+    }
+
+    /// How many children are in flight.
+    ///
+    /// Takes `&mut self` because counting means reaping first: a count that
+    /// includes children that have already finished is not a count of work in
+    /// flight, and that is the only count worth reporting.
+    pub fn len(&mut self) -> usize {
+        self.reap();
+        self.tasks.len()
+    }
+
+    /// Whether any child is still in flight.
+    pub fn is_empty(&mut self) -> bool {
+        self.len() == 0
+    }
+
+    /// Waits the children out under the ladder, and cuts what outlives it.
+    ///
+    /// Three moves, in this order:
+    ///
+    /// 1. **Reap until empty.** While the ladder has not reached
+    ///    [`Stage::Stopping`], children are simply awaited: draining says
+    ///    finish what you hold.
+    /// 2. **Reap against the clock.** Once stopping is reached — or if it
+    ///    already was — the same wait runs bounded by
+    ///    [`Shutdown::sleep_until_deadline`], which is what makes an untimed
+    ///    stage cut immediately instead of silently not cutting at all.
+    /// 3. **Cut.** Whatever is still in flight is aborted, and the count of it
+    ///    is returned. The aborted children are deliberately not awaited: a
+    ///    child that never yields would never observe its abort, and waiting
+    ///    for it is the one thing this kernel promises never to do.
+    ///
+    /// Returns how many children were cut — `0` when every one of them ended
+    /// on its own, which is the number a clean stop reports.
+    ///
+    /// Called while the ladder is still [`Stage::Running`] it waits for every
+    /// child with no bound at all, which is the right answer for a parent that
+    /// is ending on its own rather than being stopped.
+    pub async fn finish(mut self) -> usize {
+        // Draining: what is in flight finishes on its own.
+        loop {
+            if self.tasks.is_empty() {
+                return 0;
+            }
+            // Biased: a ladder already at stopping must not lose a coin toss
+            // against a child that happens to be ready at the same instant.
+            tokio::select! {
+                biased;
+                () = self.shutdown.stopping() => break,
+                _ = self.tasks.join_next() => {}
+            }
+        }
+
+        // Stopping: the same wait, now against the clock.
+        loop {
+            if self.tasks.is_empty() {
+                return 0;
+            }
+            tokio::select! {
+                biased;
+                _ = self.shutdown.sleep_until_deadline() => break,
+                _ = self.tasks.join_next() => {}
+            }
+        }
+
+        self.reap();
+        let cut = self.tasks.len();
+        self.tasks.abort_all();
+        cut
+    }
+
+    /// Frees every child that has already finished.
+    fn reap(&mut self) {
+        while self.tasks.try_join_next().is_some() {}
+    }
+}
+
+impl fmt::Debug for Children {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Children")
+            .field("stage", &self.shutdown.stage())
+            .field("children", &self.tasks.len())
+            .field("limit", &self.limit)
+            .finish_non_exhaustive()
+    }
+}
+
+/// What became of a call to [`Children::spawn`].
+///
+/// Three answers and not a `bool`, because the two refusals ask the caller for
+/// different things: `Draining` is the process ending and the work should be
+/// turned away for good, `AtLimit` is this parent being full right now and the
+/// same work may be offered again later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use = "a refused child never ran, and the work it was given is gone"]
+pub enum Spawned {
+    /// The child is running.
+    Started,
+    /// The ladder has left [`Stage::Running`]: new work is refused.
+    Draining,
+    /// The limit on children in flight is reached.
+    AtLimit,
+}
+
+impl Spawned {
+    /// Whether the child is running.
+    #[must_use]
+    pub fn is_started(self) -> bool {
+        matches!(self, Self::Started)
     }
 }
 
@@ -748,6 +1129,7 @@ mod tests {
                 bundle: "probe",
                 lifetime: kernel_core::Lifetime::Shared,
                 requires: Vec::new(),
+                requires_scoped: Vec::new(),
                 build: crate::container::erased::erase_build(build),
                 is_default: false,
                 order: 0,
@@ -894,6 +1276,271 @@ mod tests {
 
         // What a runnable that serves health reads on every request.
         assert_eq!(cx.container().extensions().count::<Marker>(), 1);
+    }
+
+    // ----------------------------------------------------------------------
+    // The stage, and the budget that is this runnable's own
+    // ----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn context_binds_handle() {
+        let handle = KernelHandle::detached();
+        let (cx, controller) = RunContext::builder().with_handle(handle.clone()).build();
+
+        controller.begin_draining();
+
+        // The one end of the lifecycle an arbitrary unit can resolve now tells
+        // the two rungs apart, which a boolean cannot.
+        assert_eq!(handle.stage(), Stage::Draining);
+        assert_eq!(cx.handle().stage(), Stage::Draining);
+        // And it is still not a request: nobody asked, the kernel is stopping.
+        assert!(!handle.is_shutting_down());
+    }
+
+    #[tokio::test]
+    async fn new_binds_handle() {
+        let (controller, shutdown) = ShutdownController::new(ShutdownPolicy::default());
+        let handle = KernelHandle::detached();
+        let container = bound();
+        let dispatcher = Arc::new(EventDispatcher::new(
+            Vec::new(),
+            Arc::clone(container.telemetry()),
+        ));
+
+        let cx = RunContext::new(
+            RunnableId::new("probe", 0),
+            container,
+            dispatcher,
+            shutdown,
+            handle.clone(),
+        );
+        controller.begin_stopping();
+
+        assert_eq!(handle.stage(), Stage::Stopping);
+        assert_eq!(cx.handle().stage(), Stage::Stopping);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn own_budget_wins() {
+        let (cx, controller) = RunContext::builder()
+            .with_policy(ShutdownPolicy::new(
+                Duration::from_secs(10),
+                Duration::from_secs(20),
+            ))
+            .with_descriptor(
+                RunnableDescriptor::new()
+                    .drain_timeout(Duration::from_secs(1))
+                    .stop_timeout(Duration::from_secs(2)),
+            )
+            .build();
+
+        assert_eq!(cx.deadline(), None);
+
+        controller.begin_draining();
+        let drained = tokio::time::Instant::now().into_std();
+        assert_eq!(cx.deadline(), Some(drained + Duration::from_secs(1)));
+        assert_eq!(
+            cx.shutdown().deadline(),
+            Some(drained + Duration::from_secs(10))
+        );
+
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        controller.begin_stopping();
+        let climbed = tokio::time::Instant::now().into_std();
+
+        // Counted from the rung the ladder climbed, which is the arithmetic
+        // this accessor exists to stop a runnable doing by hand.
+        assert_eq!(cx.deadline(), Some(climbed + Duration::from_secs(2)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deadline_defers_to_ladder() {
+        let (cx, controller) = RunContext::detached();
+
+        controller.begin_stopping();
+
+        // No budget of its own: the ladder's is the one being enforced.
+        assert!(cx.deadline().is_some());
+        assert_eq!(cx.deadline(), cx.shutdown().deadline());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ladder_caps_own_budget() {
+        let (cx, controller) = RunContext::builder()
+            .with_policy(ShutdownPolicy::new(
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+            ))
+            .with_descriptor(RunnableDescriptor::new().stop_timeout(Duration::from_secs(600)))
+            .build();
+
+        controller.begin_stopping();
+
+        // A descriptor may shorten a stage, never extend it.
+        assert_eq!(cx.deadline(), cx.shutdown().deadline());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn untimed_stages_bound_nothing() {
+        let (cx, controller) = RunContext::builder()
+            .with_descriptor(RunnableDescriptor::new().stop_timeout(Duration::from_secs(1)))
+            .build();
+
+        assert_eq!(cx.deadline(), None);
+        controller.finish();
+        assert_eq!(cx.deadline(), None);
+    }
+
+    // ----------------------------------------------------------------------
+    // Child work under the ladder
+    // ----------------------------------------------------------------------
+
+    #[tokio::test(start_paused = true)]
+    async fn children_finish_on_their_own() {
+        let (cx, controller) = RunContext::builder()
+            .with_policy(ShutdownPolicy::new(
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            ))
+            .build();
+        let done = Arc::new(AtomicUsize::new(0));
+        let mut children = Children::new(cx.shutdown().clone());
+
+        for _ in 0..3 {
+            let flag = Arc::clone(&done);
+            assert_eq!(
+                children.spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    flag.fetch_add(1, Ordering::Relaxed);
+                }),
+                Spawned::Started
+            );
+        }
+        assert_eq!(children.len(), 3);
+        assert!(format!("{children:?}").contains("Children"));
+
+        controller.begin_draining();
+        let cut = children.finish().await;
+
+        // Draining lets what is in flight finish: nothing was cut.
+        assert_eq!(cut, 0);
+        assert_eq!(done.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deadline_cuts_children() {
+        let (cx, controller) = RunContext::builder()
+            .with_policy(ShutdownPolicy::new(
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+            ))
+            .build();
+        let done = Arc::new(AtomicUsize::new(0));
+        let mut children = Children::new(cx.shutdown().clone());
+        let flag = Arc::clone(&done);
+        assert_eq!(
+            children.spawn(async move {
+                tokio::time::sleep(Duration::from_secs(600)).await;
+                flag.fetch_add(1, Ordering::Relaxed);
+            }),
+            Spawned::Started
+        );
+
+        controller.begin_stopping();
+        let started = tokio::time::Instant::now();
+        let cut = children.finish().await;
+
+        assert_eq!(cut, 1);
+        assert_eq!(done.load(Ordering::Relaxed), 0);
+        // It waited out the stopping budget before it cut, and no longer.
+        assert!(started.elapsed() >= Duration::from_secs(2));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    // An untimed stage grants no grace rather than endless grace: the cut
+    // still happens, which is what the hand-rolled `if let Some(deadline)`
+    // silently skips.
+    #[tokio::test(start_paused = true)]
+    async fn untimed_stop_cuts_now() {
+        let (cx, controller) = RunContext::detached();
+        let mut children = Children::new(cx.shutdown().clone());
+        assert_eq!(children.spawn(core::future::pending()), Spawned::Started);
+
+        // Straight past both rungs: `Stopped` is timed by nothing.
+        controller.finish();
+        let started = tokio::time::Instant::now();
+        let cut = children.finish().await;
+
+        assert_eq!(cut, 1);
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn limit_refuses_child() {
+        let (cx, _controller) = RunContext::detached();
+        let mut children = Children::new(cx.shutdown().clone()).with_limit(1);
+
+        assert_eq!(children.spawn(core::future::pending()), Spawned::Started);
+        assert_eq!(children.spawn(core::future::pending()), Spawned::AtLimit);
+        assert!(!Spawned::AtLimit.is_started());
+        assert!(Spawned::Started.is_started());
+        assert_eq!(children.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn draining_refuses_child() {
+        let (cx, controller) = RunContext::detached();
+        let mut children = Children::new(cx.shutdown().clone());
+
+        controller.begin_draining();
+
+        // New work is refused, and the caller is told which refusal it was.
+        assert_eq!(children.spawn(async {}), Spawned::Draining);
+        assert!(children.is_empty());
+        assert_eq!(children.finish().await, 0);
+    }
+
+    // The limit bounds work in flight, not work ever done: a finished child
+    // frees its slot.
+    #[tokio::test]
+    async fn finished_child_frees_slot() {
+        let (cx, _controller) = RunContext::detached();
+        let mut children = Children::new(cx.shutdown().clone()).with_limit(1);
+
+        assert_eq!(children.spawn(async {}), Spawned::Started);
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+
+        assert_eq!(children.spawn(async {}), Spawned::Started);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stopping_cuts_a_late_child() {
+        let (cx, controller) = RunContext::builder()
+            .with_policy(ShutdownPolicy::new(
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+            ))
+            .build();
+        let done = Arc::new(AtomicUsize::new(0));
+        let mut children = Children::new(cx.shutdown().clone());
+
+        // One child ends inside the budget, one outlives it.
+        let flag = Arc::clone(&done);
+        let _ = children.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            flag.fetch_add(1, Ordering::Relaxed);
+        });
+        let _ = children.spawn(core::future::pending());
+
+        controller.begin_stopping();
+        let cut = children.finish().await;
+
+        // The one that fitted inside the budget ran to its end; the one that
+        // did not was cut, and only it.
+        assert_eq!(cut, 1);
+        assert_eq!(done.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]

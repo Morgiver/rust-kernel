@@ -62,6 +62,12 @@ impl fmt::Display for Level {
 ///
 /// The set of shapes is deliberately closed: it is what the kernel itself
 /// needs to report, and it keeps every backend's mapping total.
+///
+/// Every primitive integer converts into one. Widths `i64` can hold become
+/// [`Int`](FieldValue::Int); a value outside that range — a `u64`, `usize`,
+/// `u128` or `i128` too large — keeps its exact decimal as a
+/// [`Str`](FieldValue::Str) instead of saturating, because a count that
+/// saturates silently reports a number that never happened.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FieldValue {
     /// Textual value.
@@ -85,6 +91,54 @@ impl FieldValue {
             FieldValue::Bool(_) => "bool",
             FieldValue::Duration(_) => "duration",
         }
+    }
+
+    /// The text, when this is a [`FieldValue::Str`].
+    #[must_use]
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            FieldValue::Str(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The number, when this is a [`FieldValue::Int`].
+    #[must_use]
+    pub const fn as_int(&self) -> Option<i64> {
+        match self {
+            FieldValue::Int(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// The flag, when this is a [`FieldValue::Bool`].
+    #[must_use]
+    pub const fn as_bool(&self) -> Option<bool> {
+        match self {
+            FieldValue::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// The duration, when this is a [`FieldValue::Duration`].
+    #[must_use]
+    pub const fn as_duration(&self) -> Option<Duration> {
+        match self {
+            FieldValue::Duration(value) => Some(*value),
+            _ => None,
+        }
+    }
+}
+
+/// Converts an integer of any width without ever reporting a wrong number.
+///
+/// A value `i64` can hold becomes [`FieldValue::Int`]; anything else keeps its
+/// exact decimal as a [`FieldValue::Str`]. Saturating would be silent, and a
+/// silent count is worse than a loud one.
+fn wide_integer<T: TryInto<i64> + fmt::Display + Copy>(value: T) -> FieldValue {
+    match value.try_into() {
+        Ok(fitted) => FieldValue::Int(fitted),
+        Err(_) => FieldValue::Str(value.to_string()),
     }
 }
 
@@ -121,9 +175,71 @@ impl From<i64> for FieldValue {
     }
 }
 
+impl From<i8> for FieldValue {
+    fn from(value: i8) -> Self {
+        FieldValue::Int(i64::from(value))
+    }
+}
+
+impl From<i16> for FieldValue {
+    fn from(value: i16) -> Self {
+        FieldValue::Int(i64::from(value))
+    }
+}
+
+impl From<i32> for FieldValue {
+    fn from(value: i32) -> Self {
+        FieldValue::Int(i64::from(value))
+    }
+}
+
+impl From<u8> for FieldValue {
+    fn from(value: u8) -> Self {
+        FieldValue::Int(i64::from(value))
+    }
+}
+
+impl From<u16> for FieldValue {
+    fn from(value: u16) -> Self {
+        FieldValue::Int(i64::from(value))
+    }
+}
+
 impl From<u32> for FieldValue {
     fn from(value: u32) -> Self {
         FieldValue::Int(i64::from(value))
+    }
+}
+
+/// A `usize` is the commonest count there is, so it converts like any other
+/// integer: exactly, or as its own decimal when it does not fit.
+impl From<usize> for FieldValue {
+    fn from(value: usize) -> Self {
+        wide_integer(value)
+    }
+}
+
+impl From<isize> for FieldValue {
+    fn from(value: isize) -> Self {
+        wide_integer(value)
+    }
+}
+
+impl From<u64> for FieldValue {
+    fn from(value: u64) -> Self {
+        wide_integer(value)
+    }
+}
+
+impl From<u128> for FieldValue {
+    fn from(value: u128) -> Self {
+        wide_integer(value)
+    }
+}
+
+impl From<i128> for FieldValue {
+    fn from(value: i128) -> Self {
+        wide_integer(value)
     }
 }
 
@@ -217,6 +333,49 @@ impl Record {
             .iter()
             .find(|field| field.key == key)
             .map(|field| &field.value)
+    }
+
+    /// The text of the first field with this key, when it carries one.
+    ///
+    /// `None` covers both an absent field and one of another shape: an
+    /// assertion on telemetry wants the value or nothing, never a variant
+    /// match.
+    ///
+    /// ```
+    /// use kernel_core::telemetry::{Level, Record};
+    ///
+    /// let record = Record::new(Level::Info, "e").with("unit", "alpha");
+    /// assert_eq!(record.str("unit"), Some("alpha"));
+    /// assert_eq!(record.int("unit"), None);
+    /// ```
+    #[must_use]
+    pub fn str(&self, key: &str) -> Option<&str> {
+        self.field(key).and_then(FieldValue::as_str)
+    }
+
+    /// The number of the first field with this key, when it carries one.
+    ///
+    /// ```
+    /// use kernel_core::telemetry::{Level, Record};
+    ///
+    /// let record = Record::new(Level::Info, "e").with("admitted", 3usize);
+    /// assert_eq!(record.int("admitted"), Some(3));
+    /// ```
+    #[must_use]
+    pub fn int(&self, key: &str) -> Option<i64> {
+        self.field(key).and_then(FieldValue::as_int)
+    }
+
+    /// The flag of the first field with this key, when it carries one.
+    #[must_use]
+    pub fn bool(&self, key: &str) -> Option<bool> {
+        self.field(key).and_then(FieldValue::as_bool)
+    }
+
+    /// The duration of the first field with this key, when it carries one.
+    #[must_use]
+    pub fn duration(&self, key: &str) -> Option<Duration> {
+        self.field(key).and_then(FieldValue::as_duration)
     }
 }
 
@@ -450,6 +609,96 @@ mod tests {
             FieldValue::Duration(Duration::from_secs(1))
         );
         assert_eq!(FieldValue::Int(0).kind_name(), "int");
+    }
+
+    #[test]
+    fn narrow_conversions() {
+        assert_eq!(FieldValue::from(7i8), FieldValue::Int(7));
+        assert_eq!(FieldValue::from(-7i16), FieldValue::Int(-7));
+        assert_eq!(FieldValue::from(7i32), FieldValue::Int(7));
+        assert_eq!(FieldValue::from(7u8), FieldValue::Int(7));
+        assert_eq!(FieldValue::from(7u16), FieldValue::Int(7));
+        assert_eq!(FieldValue::from(7usize), FieldValue::Int(7));
+        assert_eq!(FieldValue::from(-7isize), FieldValue::Int(-7));
+        assert_eq!(FieldValue::from(7u64), FieldValue::Int(7));
+        assert_eq!(FieldValue::from(7u128), FieldValue::Int(7));
+        assert_eq!(FieldValue::from(-7i128), FieldValue::Int(-7));
+        let largest = u64::try_from(i64::MAX).expect("fits");
+        assert_eq!(FieldValue::from(largest), FieldValue::Int(i64::MAX));
+    }
+
+    #[test]
+    fn wide_stays_exact() {
+        let over = u64::MAX;
+        assert_eq!(
+            FieldValue::from(over),
+            FieldValue::Str("18446744073709551615".to_owned())
+        );
+        assert_eq!(
+            FieldValue::from(u128::from(u64::MAX) + 1),
+            FieldValue::Str("18446744073709551616".to_owned())
+        );
+        assert_eq!(
+            FieldValue::from(i128::from(i64::MIN) - 1),
+            FieldValue::Str("-9223372036854775809".to_owned())
+        );
+        // Never the saturated number, which would report a count nobody saw.
+        assert_ne!(FieldValue::from(over), FieldValue::Int(i64::MAX));
+        assert_eq!(FieldValue::from(over).kind_name(), "str");
+    }
+
+    #[test]
+    fn counts_without_narrowing() {
+        let items = ["a", "b", "c"];
+        let record = Record::new(Level::Info, "e").with("count", items.len());
+        assert_eq!(record.int("count"), Some(3));
+    }
+
+    #[test]
+    fn typed_readers() {
+        let record = Record::new(Level::Info, "e")
+            .with("unit", "alpha")
+            .with("attempt", 2u32)
+            .with("forced", true)
+            .with("took", Duration::from_millis(5));
+
+        assert_eq!(record.str("unit"), Some("alpha"));
+        assert_eq!(record.int("attempt"), Some(2));
+        assert_eq!(record.bool("forced"), Some(true));
+        assert_eq!(record.duration("took"), Some(Duration::from_millis(5)));
+
+        // Wrong shape reads as absent, and so does a missing key.
+        assert_eq!(record.int("unit"), None);
+        assert_eq!(record.str("attempt"), None);
+        assert_eq!(record.bool("took"), None);
+        assert_eq!(record.duration("forced"), None);
+        assert_eq!(record.int("missing"), None);
+        assert_eq!(record.str("missing"), None);
+        assert_eq!(record.bool("missing"), None);
+        assert_eq!(record.duration("missing"), None);
+    }
+
+    #[test]
+    fn value_readers() {
+        assert_eq!(FieldValue::Str("a".to_owned()).as_str(), Some("a"));
+        assert_eq!(FieldValue::Int(1).as_int(), Some(1));
+        assert_eq!(FieldValue::Bool(false).as_bool(), Some(false));
+        assert_eq!(
+            FieldValue::Duration(Duration::from_secs(2)).as_duration(),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(FieldValue::Int(1).as_str(), None);
+        assert_eq!(FieldValue::Bool(true).as_int(), None);
+        assert_eq!(FieldValue::Int(1).as_bool(), None);
+        assert_eq!(FieldValue::Int(1).as_duration(), None);
+    }
+
+    #[test]
+    fn reads_first_of_key() {
+        let record = Record::new(Level::Info, "e")
+            .with("n", 1i64)
+            .with("n", 2i64);
+        assert_eq!(record.int("n"), Some(1));
     }
 
     #[test]

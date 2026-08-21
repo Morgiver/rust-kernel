@@ -1,12 +1,18 @@
 //! Phase four: instantiate the graph and boot the components.
+//!
+//! The two walks phase six needs over the same components live here too, for
+//! the same reason [`rollback`] does: both are driven over what [`Booted`]
+//! recorded, in the order it recorded it.
 
 use core::fmt;
+use core::future::poll_fn;
+use core::task::Poll;
 use core::time::Duration;
 use std::sync::Arc;
 
 use kernel_core::error::BoxSource;
 use kernel_core::{
-    ComponentError, ComponentId, Level, Record, ShutdownError, ShutdownPolicy, Telemetry,
+    BoxFuture, ComponentError, ComponentId, Level, Record, ShutdownError, ShutdownPolicy, Telemetry,
 };
 use tokio::time::{Instant, timeout};
 
@@ -35,6 +41,10 @@ const BOOT_COMPLETED: &str = "kernel.boot_completed";
 const FAILED: &str = "kernel.boot_failed";
 /// Telemetry event name for a rollback shutdown that failed on its way out.
 const ROLLBACK_FAILED: &str = "kernel.rollback_failed";
+/// Telemetry event name for the end of the components' drain.
+const DRAINED: &str = "kernel.components_drained";
+/// Telemetry event name for a component that refused to drain.
+const DRAIN_FAILED: &str = "kernel.drain_failed";
 
 /// What phase four produced, in the order it actually happened.
 ///
@@ -70,6 +80,18 @@ pub(crate) struct RolledBack {
     /// Components stopped again, in the order they were stopped.
     pub stopped: Vec<ComponentId>,
     /// The failures of the ones that did not stop cleanly, in the same order.
+    pub failures: Vec<ShutdownError>,
+}
+
+/// What a drain walk reached, and what refused to drain.
+///
+/// The same two halves [`RolledBack`] reports, for the same reason: the walk
+/// covered every component, and some of them did not drain cleanly.
+#[derive(Debug, Default)]
+pub(crate) struct Drained {
+    /// Components that drained cleanly, in the order they returned.
+    pub drained: Vec<ComponentId>,
+    /// The failures of the ones that did not, in the order they were filed.
     pub failures: Vec<ShutdownError>,
 }
 
@@ -150,7 +172,7 @@ pub(crate) async fn boot(
     // Recorded as well as emitted: an operator reads the telemetry stream as
     // the log of what happened, and a phase boundary missing from it is a gap
     // in the timeline.
-    telemetry.record(Record::new(Level::Info, BOOT_STARTED).with("components", count(planned)));
+    telemetry.record(Record::new(Level::Info, BOOT_STARTED).with("components", planned));
     dispatcher.emit(BootStarted {
         components: planned,
     });
@@ -214,12 +236,128 @@ pub(crate) async fn boot(
     let elapsed = started.elapsed();
     telemetry.record(
         Record::new(Level::Info, BOOT_COMPLETED)
-            .with("components", count(booted.components.len()))
+            .with("components", booted.components.len())
             .with("elapsed", elapsed),
     );
     dispatcher.emit(BootCompleted { elapsed });
 
     Ok(booted)
+}
+
+/// Tells every booted component to refuse new work, and waits for them.
+///
+/// The first rung of phase six, run while every runnable is still going: a
+/// component that owns the resource new work arrives through closes that door
+/// here, and the runnables go on finishing what they already took. Nothing has
+/// wound down yet when this is called, which is the whole point — a component
+/// that could only be told at [`rollback`] time would be told after the work it
+/// was meant to stop accepting had already stopped arriving.
+///
+/// # Why the walk is concurrent
+///
+/// Draining is not ordered: refusing new work reads nothing from another
+/// component and waits for nothing, so there is no dependency to respect and
+/// no reason for one component to wait its turn. Every component is therefore
+/// told at the same instant and every one of them holds the WHOLE `budget` —
+/// which is the same rule the sequential walks obey by giving each unit a
+/// budget of its own, reached here without spending the ladder's drain window
+/// N times over. A component still running when the budget elapses is dropped
+/// where it stands, recorded, and the rest of the shutdown carries on: nothing
+/// waits for it, and no other component was ever waiting on it.
+///
+/// The walk is driven in reverse boot order for the sake of the record it
+/// leaves: what booted last is what faces the outside first, so it is the first
+/// to be told to stop taking work.
+pub(crate) async fn drain(booted: &Booted, cx: &ShutdownContext<'_>, budget: Duration) -> Drained {
+    let telemetry = Arc::clone(cx.telemetry());
+    let started = Instant::now();
+    // Every component reads the same deadline, because every component is
+    // being cut at the same instant.
+    let unit = ShutdownContext::with_deadline(
+        cx.container(),
+        cx.dispatcher(),
+        cx.shutdown(),
+        (started + budget).into_std(),
+    );
+
+    let mut pending: Vec<(ComponentId, BoxFuture<'_, Result<(), ComponentError>>)> = booted
+        .components
+        .iter()
+        .rev()
+        .map(|(id, component)| (*id, component.drain(&unit)))
+        .collect();
+    let mut walk = Drained::default();
+
+    {
+        let running = &mut pending;
+        let filed = &mut walk;
+        // One future over the whole set: `tokio::spawn` is out of reach here,
+        // because a drain call borrows both its component and the context.
+        let _ = timeout(
+            budget,
+            poll_fn(|task| {
+                let mut index = 0;
+                while index < running.len() {
+                    match running[index].1.as_mut().poll(task) {
+                        Poll::Ready(result) => {
+                            let (id, _) = running.remove(index);
+                            file(&telemetry, filed, id, result);
+                        }
+                        Poll::Pending => index += 1,
+                    }
+                }
+                if running.is_empty() {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            }),
+        )
+        .await;
+    }
+
+    // Whatever is left never returned, so the budget elapsed under it. Dropping
+    // it here is what stops it draining behind the kernel's back.
+    for (id, _) in pending {
+        let failure = ShutdownError::deadline_exceeded(id.name());
+        record_drain_failure(&telemetry, id, &failure);
+        walk.failures.push(failure);
+    }
+
+    telemetry.record(
+        Record::new(Level::Info, DRAINED)
+            .with("components", walk.drained.len())
+            .with("failures", walk.failures.len())
+            .with("elapsed", started.elapsed()),
+    );
+
+    walk
+}
+
+/// Files one drain result: a clean return, or the failure it reported.
+fn file(
+    telemetry: &Arc<dyn Telemetry>,
+    walk: &mut Drained,
+    id: ComponentId,
+    result: Result<(), ComponentError>,
+) {
+    match result {
+        Ok(()) => walk.drained.push(id),
+        Err(error) => {
+            let failure = ShutdownError::failed(id.name(), Box::new(error));
+            record_drain_failure(telemetry, id, &failure);
+            walk.failures.push(failure);
+        }
+    }
+}
+
+/// Records one component that did not drain cleanly.
+fn record_drain_failure(telemetry: &Arc<dyn Telemetry>, id: ComponentId, failure: &ShutdownError) {
+    telemetry.record(
+        Record::new(Level::Error, DRAIN_FAILED)
+            .with("component", id.name())
+            .with("error", failure.to_string()),
+    );
 }
 
 /// Stops the components of a partial boot, in the reverse of the observed order.
@@ -360,11 +498,6 @@ async fn unwind(
     }
 }
 
-/// A count, in the only integer shape a record carries.
-fn count(value: usize) -> i64 {
-    i64::try_from(value).unwrap_or(i64::MAX)
-}
-
 /// Records the failure that ends phase four.
 fn record_failure(telemetry: &Arc<dyn Telemetry>, id: ComponentId, source: &ComponentError) {
     telemetry.record(
@@ -383,7 +516,7 @@ mod tests {
 
     use kernel_core::{
         BoxFuture, BuildError, ComponentDescriptor, ConfigTree, ContractRef, Event, Flow, Lifetime,
-        ListenerError, NoopTelemetry, Priority, RecordingTelemetry,
+        ListenerError, NoopTelemetry, Priority, RecordingTelemetry, Stage,
     };
 
     use crate::container::Container;
@@ -429,6 +562,7 @@ mod tests {
     struct Unit<const N: usize> {
         trace: Trace,
         booting: Step,
+        draining: Step,
         stopping: Step,
         budget: Option<Duration>,
     }
@@ -438,6 +572,7 @@ mod tests {
             Self {
                 trace: trace.clone(),
                 booting: Step::Pass,
+                draining: Step::Pass,
                 stopping: Step::Pass,
                 budget: None,
             }
@@ -445,6 +580,11 @@ mod tests {
 
         fn booting(mut self, step: Step) -> Self {
             self.booting = step;
+            self
+        }
+
+        fn draining(mut self, step: Step) -> Self {
+            self.draining = step;
             self
         }
 
@@ -494,6 +634,13 @@ mod tests {
             _cx: &'a BootContext<'a>,
         ) -> BoxFuture<'a, Result<(), ComponentError>> {
             Box::pin(self.step(self.booting, "boot"))
+        }
+
+        fn drain<'a>(
+            &'a self,
+            _cx: &'a ShutdownContext<'a>,
+        ) -> BoxFuture<'a, Result<(), ComponentError>> {
+            Box::pin(self.step(self.draining, "drain"))
         }
 
         fn shutdown<'a>(
@@ -949,6 +1096,147 @@ mod tests {
             ),
             EventDispatcher::new(Vec::new(), Arc::new(NoopTelemetry)),
         )
+    }
+
+    // ----------------------------------------------------------------------
+    // The first rung: refusing new work
+    // ----------------------------------------------------------------------
+
+    /// Two booted components, the given one hanging in `drain`.
+    fn drainable(trace: &Trace, hangs: Option<Duration>) -> Booted {
+        let second = match hangs {
+            Some(delay) => Unit::<1>::new(trace).draining(Step::Wait(delay)),
+            None => Unit::<1>::new(trace),
+        };
+        Booted {
+            components: vec![
+                (Unit::<0>::id(), Arc::new(Unit::<0>::new(trace))),
+                (Unit::<1>::id(), Arc::new(second)),
+            ],
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn drains_at_the_first_rung() {
+        let (container, dispatcher) = parts();
+        let (controller, shutdown) = ShutdownController::new(ShutdownPolicy::DEFAULT);
+        controller.begin_draining();
+        let trace = Trace::default();
+
+        let cx = ShutdownContext::new(&container, &dispatcher, &shutdown);
+        let drained = drain(&drainable(&trace, None), &cx, Duration::from_secs(1)).await;
+
+        // What booted last faces the outside first, so it is told first.
+        assert_eq!(drained.drained, [Unit::<1>::id(), Unit::<0>::id()]);
+        assert!(drained.failures.is_empty());
+        assert_eq!(trace.entries(), ["drain:beta", "drain:alpha"]);
+        assert_eq!(shutdown.stage(), Stage::Draining);
+    }
+
+    /// The gap: a component that hangs on the way out must not hold the ladder
+    /// down, and its neighbour must not be charged for the wait.
+    #[tokio::test(start_paused = true)]
+    async fn hanging_drain_is_cut() {
+        let (container, dispatcher) = parts();
+        let (controller, shutdown) = ShutdownController::new(ShutdownPolicy::DEFAULT);
+        controller.begin_draining();
+        let trace = Trace::default();
+        let budget = Duration::from_secs(1);
+        let started = Instant::now();
+
+        let cx = ShutdownContext::new(&container, &dispatcher, &shutdown);
+        let drained = drain(
+            &drainable(&trace, Some(Duration::from_secs(600))),
+            &cx,
+            budget,
+        )
+        .await;
+
+        // Cut at the budget, not ten minutes later.
+        assert_eq!(started.elapsed(), budget);
+        // The one that hung is reported; the other drained anyway, and did not
+        // wait its turn behind it.
+        assert_eq!(drained.drained, [Unit::<0>::id()]);
+        assert_eq!(drained.failures.len(), 1);
+        assert_eq!(drained.failures[0].unit(), "beta");
+        // `step` traces after its wait, so a call dropped at its deadline
+        // leaves nothing behind.
+        assert_eq!(trace.entries(), ["drain:alpha"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn drain_failure_is_reported() {
+        let sink = RecordingTelemetry::new();
+        let container = Container::new(
+            Vec::new(),
+            Arc::new(ConfigTree::empty()),
+            Arc::new(sink.clone()) as Arc<dyn Telemetry>,
+            KernelHandle::detached(),
+        );
+        let dispatcher = EventDispatcher::new(Vec::new(), Arc::new(NoopTelemetry));
+        let (controller, shutdown) = ShutdownController::new(ShutdownPolicy::DEFAULT);
+        controller.begin_draining();
+        let trace = Trace::default();
+        let booted = Booted {
+            components: vec![(
+                Unit::<0>::id(),
+                Arc::new(Unit::<0>::new(&trace).draining(Step::Fail)) as Arc<dyn Component>,
+            )],
+        };
+
+        let cx = ShutdownContext::new(&container, &dispatcher, &shutdown);
+        let drained = drain(&booted, &cx, Duration::from_secs(1)).await;
+
+        assert!(drained.drained.is_empty());
+        assert_eq!(drained.failures.len(), 1);
+        assert!(sink.contains(DRAIN_FAILED));
+        assert!(sink.contains(DRAINED));
+    }
+
+    /// A component that implements nothing costs nothing, and the walk still
+    /// reports it.
+    #[tokio::test(start_paused = true)]
+    async fn silent_drain_costs_nothing() {
+        let (container, dispatcher) = parts();
+        let (controller, shutdown) = ShutdownController::new(ShutdownPolicy::DEFAULT);
+        controller.begin_draining();
+        let started = Instant::now();
+        let booted = Booted {
+            components: vec![(Silent::id(), Arc::new(Silent) as Arc<dyn Component>)],
+        };
+
+        let cx = ShutdownContext::new(&container, &dispatcher, &shutdown);
+        let drained = drain(&booted, &cx, Duration::from_secs(1)).await;
+
+        assert_eq!(drained.drained, [Silent::id()]);
+        assert_eq!(started.elapsed(), Duration::ZERO);
+        assert!(format!("{drained:?}").contains("Drained"));
+    }
+
+    /// Implements neither hook: the default drain is what it is measured on.
+    struct Silent;
+
+    impl Silent {
+        fn id() -> ComponentId {
+            ComponentId::new("silent", 9)
+        }
+    }
+
+    impl Component for Silent {
+        fn name() -> &'static str {
+            "silent"
+        }
+
+        fn descriptor(&self) -> ComponentDescriptor {
+            ComponentDescriptor::new()
+        }
+
+        fn boot<'a>(
+            &'a self,
+            _cx: &'a BootContext<'a>,
+        ) -> BoxFuture<'a, Result<(), ComponentError>> {
+            Box::pin(async { Ok(()) })
+        }
     }
 
     #[tokio::test(start_paused = true)]

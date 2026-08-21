@@ -8,9 +8,8 @@ use core::time::Duration;
 use std::sync::{Arc, Mutex};
 
 use kernel::core::{
-    BundleManifest, ComponentDescriptor, ComponentError, Criticality, FieldValue, KernelError,
-    Outcome, Record, RecordingTelemetry, RegisterError, RunError, RunnableDescriptor,
-    ShutdownPolicy,
+    BundleManifest, ComponentDescriptor, ComponentError, Criticality, KernelError, Outcome, Record,
+    RecordingTelemetry, RegisterError, RunError, RunnableDescriptor, ShutdownPolicy,
 };
 use kernel::{
     BootContext, BoxFuture, Bundle, Component, Kernel, Provider, Registry, RunContext, Runnable,
@@ -263,11 +262,7 @@ fn text(sink: &RecordingTelemetry, event: &str, key: &str) -> Option<String> {
     sink.records()
         .iter()
         .find(|record| record.event == event)
-        .and_then(|record| record.field(key))
-        .and_then(|value| match value {
-            FieldValue::Str(found) => Some(found.clone()),
-            _ => None,
-        })
+        .and_then(|record| record.str(key).map(str::to_owned))
 }
 
 /// Fails if any recorded string mentions a Rust type path of a test unit.

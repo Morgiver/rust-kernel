@@ -15,9 +15,9 @@ use core::time::Duration;
 use std::sync::{Arc, Mutex};
 
 use kernel::core::{
-    Backoff, BundleManifest, ComponentDescriptor, ComponentError, ComponentId, Criticality,
-    FieldValue, Flow, KernelError, Lifetime, ListenerError, Outcome, Priority, RecordingTelemetry,
-    RegisterError, RestartPolicy, RunError, RunnableDescriptor, ShutdownPolicy,
+    Backoff, BundleManifest, ComponentDescriptor, ComponentError, ComponentId, Criticality, Flow,
+    KernelError, Lifetime, ListenerError, Outcome, Priority, RecordingTelemetry, RegisterError,
+    RestartPolicy, RunError, RunnableDescriptor, ShutdownPolicy,
 };
 use kernel::events::ShutdownRequested;
 use kernel::{
@@ -480,15 +480,10 @@ fn ancillary() -> RunnableDescriptor {
 
 /// The integer a recorded event carried under `key`.
 fn recorded(sink: &RecordingTelemetry, event: &str, key: &str) -> Option<i64> {
-    let records = sink.records();
-    records
+    sink.records()
         .iter()
         .find(|record| record.event == event)
-        .and_then(|record| record.field(key))
-        .and_then(|value| match value {
-            FieldValue::Int(number) => Some(*number),
-            _ => None,
-        })
+        .and_then(|record| record.int(key))
 }
 
 // --------------------------------------------------------------------------
@@ -803,13 +798,17 @@ async fn unreached_binding_is_built() {
             )))));
             // Declared because it is resolved from `run`, not only from a
             // build: the debug guard reads the same `requires` at both moments.
+            // `Sink` is resolved inside the scope this runnable opens, so it is
+            // declared where a unit of work declares — the guard reads that
+            // list on the scope's own container.
             registry.runnable(
                 Provider::from_value(Arc::new(Reacher(Job::new(
                     ancillary(),
                     &journal,
                     Work::Reach,
                 ))))
-                .requires([ContractRef::of::<dyn Surface>()]),
+                .requires([ContractRef::of::<dyn Surface>()])
+                .requires_scoped([ContractRef::of::<dyn Sink>()]),
             );
         })
     };
@@ -1228,4 +1227,65 @@ async fn detached_listener_runs() {
     // The container it was given is empty, and it is a real one: a listener
     // that resolves is told what is missing rather than panicking.
     assert!(detached.container().get::<Journal>().await.is_err());
+}
+
+// --------------------------------------------------------------------------
+// The scope guard, through a real supervisor
+// --------------------------------------------------------------------------
+
+/// Resolves a `Scoped` binding it did not declare, inside the scope it opens.
+struct Greedy;
+
+impl Runnable for Greedy {
+    fn name() -> &'static str {
+        "greedy"
+    }
+
+    fn descriptor(&self) -> RunnableDescriptor {
+        ancillary()
+    }
+
+    fn run(self: Arc<Self>, cx: RunContext) -> BoxFuture<'static, Result<(), RunError>> {
+        Box::pin(async move {
+            let scope = cx.container().scope();
+            let _ = scope.get::<dyn Sink>().await;
+            Ok(())
+        })
+    }
+}
+
+/// The scope a runnable opens is framed by what the runnable declared its unit
+/// of work resolves, on the container the supervisor actually hands it.
+///
+/// `container/mod.rs` proves the frame over a fixture. This proves the
+/// production path carries it: `for_unit`, `RunContext`, `scope()`.
+#[cfg(debug_assertions)]
+#[tokio::test(start_paused = true)]
+async fn scope_guard_bites_under_the_kernel() {
+    let sink = RecordingTelemetry::new();
+    let bundle = assembly("greedy-scope", |registry| {
+        registry.provide(
+            Provider::from_value(Arc::new(Plain) as Arc<dyn Sink>).lifetime(Lifetime::Scoped),
+        );
+        registry.provide_named(
+            "other",
+            Provider::from_value(Arc::new(Plain) as Arc<dyn Sink>).lifetime(Lifetime::Scoped),
+        );
+        // Declares one scoped need and resolves the other.
+        registry.runnable(
+            Provider::from_value(Arc::new(Greedy))
+                .requires_scoped([ContractRef::named::<dyn Sink>("other")]),
+        );
+    });
+
+    let outcome = built(&sink, bundle).await.run().await;
+
+    assert!(outcome.is_success(), "{outcome:?}");
+    let failed = sink
+        .records()
+        .into_iter()
+        .find(|record| record.event == "runnable.failed")
+        .expect("the guard panicked and the supervisor filed it");
+    let error = failed.str("cause").expect("the failure names its cause");
+    assert!(error.contains("requires_scoped"), "{error}");
 }
