@@ -12,8 +12,9 @@
 # Third-party proc-macro crates (`tokio-macros` and friends) are not concerned;
 # only workspace members are.
 #
-# No `*-macros` member exists today, so the guard reduces to "the suite builds",
-# and it starts biting the moment one is added.
+# `kernel-macros` is the member this bites on: the guard drops it, runs the
+# remaining suite, and refuses to let any non-macros member reach it with
+# default features.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

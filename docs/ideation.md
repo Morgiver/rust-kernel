@@ -847,6 +847,7 @@ sérialisation de fichiers de configuration · et **tout** ce qui est métier.
 | Pas de résolution paresseuse en phase 5 | Le Container refuse une première instanciation `Shared` après `BootCompleted` |
 | Macros non obligatoires | Une tâche de CI compile la suite sans `kernel-macros` |
 | Surface publique documentée | `#![deny(missing_docs)]` sur `kernel-core` et `kernel` |
+| Aucune dépendance de production n'allume `kernel/testing` | `ci/check-testing-feature.sh` : arbre résolu, table de dépendances déclarée, table de features déclarée |
 
 ---
 
@@ -915,10 +916,23 @@ tourné.
   construction. `TestHarness` conduit le Kernel depuis un test : `start`,
   `stop`, `wait`.
 - La substitution de liaison vit sur **`TestBuilder`**, un type distinct de
-  `KernelBuilder`. Du code qui tient un `KernelBuilder` ne peut pas l'appeler,
-  quelles que soient les features actives dans le graphe de compilation : la
-  frontière est tenue par le type. La feature `testing` gouverne l'existence du
-  module ; le type gouverne qui peut l'appeler.
+  `KernelBuilder`. La garantie tenue est celle du **graphe de production** : un
+  graphe qui atteint `kernel` sans passer par une dev-dependency sur
+  `kernel-testkit` compile avec la feature `testing` éteinte, `__register_hook`
+  n'y existe pas, et aucune substitution n'y est atteignable. C'est
+  `ci/check-testing-feature.sh` qui la tient — pas le type.
+- La garantie plus forte — « quelles que soient les features actives dans le
+  graphe de compilation » — **n'est pas atteignable entre crates en Rust**, et
+  l'affirmer était faux. Une feature Cargo est unifiée sur tout un build : dans
+  le `cargo test` d'un crate qui dev-dépend de `kernel-testkit`, `kernel/testing`
+  est allumée pour l'ensemble du graphe, et n'importe quel `#[test]` de ce crate
+  peut appeler `KernelBuilder::new().__register_hook(...)` sans nommer un seul
+  type de `kernel-testkit`. Vérifié par expérience, pas supposé. Rien ne permet
+  de restreindre une feature au graphe de dev d'un seul crate.
+- Ce résidu est **accepté** : qui atteint le hook est en train d'écrire un test.
+  Passer par `TestBuilder` reste ce qui place la substitution dans l'ordre des
+  phases — après tous les `register`, devant la validation de phase 3 — et c'est
+  la seule chose que le type gouverne.
 - Une substitution **conserve la nature** de ce qu'elle remplace : la doublure
   d'un Component reste bootée par le Kernel.
 - Un Bundle peut être booté seul. Les contrats non satisfaits sont rapportés en
@@ -928,7 +942,11 @@ tourné.
   `EventLog<E>` (un Listener qui conserve chaque événement de type `E`) et
   `missing_contracts`. L'enregistreur de telemetry, `RecordingTelemetry`, vit
   dans `kernel-core` parce que le Kernel s'en sert aussi comme implémentation
-  par défaut de diagnostic.
+  par défaut de diagnostic. `missing_contracts` rend un
+  `Result<Vec<ContractRef>, KernelError>` : la liste vide dit « ce Bundle tient
+  seul », l'erreur dit « il n'a pas atteint la phase 3 ». Il construit **sans
+  aucune source de configuration**, donc un Bundle qui lit sa configuration en
+  `register` échoue là et le dit, au lieu de se faire passer pour autonome.
 - Un Runnable est testable hors Kernel : on lui passe un `RunContext` fabriqué
   et on vérifie qu'il rend la main sur le jeton d'arrêt. Ce test est **exigible
   pour tout Runnable**.

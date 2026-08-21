@@ -1,0 +1,15 @@
+[package]
+name = "minimal"
+description = "Application-layer illustration. Nothing here belongs to the kernel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time"] }
+
+[lints]
+workspace = true

@@ -80,6 +80,10 @@ const KERNEL: &str = "kernel";
 /// failure, and it needs a sentence rather than a source.
 const ESSENTIAL_LEFT: &str = "essential runnable returned while others were still running";
 
+/// The registry hook `kernel-testkit` installs; see `KernelBuilder::hook`.
+#[cfg(feature = "testing")]
+type RegistryHook = Box<dyn FnOnce(&mut Registry) + Send>;
+
 /// Assembles a kernel: phases one to three, and nothing else.
 ///
 /// `build` runs the whole validation and instantiates nothing. If it returns
@@ -96,6 +100,21 @@ pub struct KernelBuilder {
     policy: ShutdownPolicy,
     /// Whether the kernel installs its own stop-signal handler.
     capture_signals: bool,
+    /// Ran after every bundle has registered and before phase three.
+    ///
+    /// The hook `kernel-testkit` substitutes bindings through. It exists only
+    /// under the `testing` feature, which `ci/check-testing-feature.sh`
+    /// refuses on any non-dev dependency edge — so in a production graph this
+    /// field, and the hook that installs it, are not compiled at all.
+    ///
+    /// Within `cargo test` of a crate that dev-depends on `kernel-testkit`,
+    /// cargo unifies the feature across the whole build and the hook IS
+    /// reachable from any test there, without naming a `kernel-testkit` type.
+    /// The substitution API still lives on `kernel_testkit::TestBuilder`,
+    /// which is what keeps a substitution in the phase order; the type does
+    /// not, and cannot, hold the boundary on its own.
+    #[cfg(feature = "testing")]
+    hook: Option<RegistryHook>,
 }
 
 impl KernelBuilder {
@@ -108,7 +127,17 @@ impl KernelBuilder {
             telemetry: Arc::new(NoopTelemetry),
             policy: ShutdownPolicy::DEFAULT,
             capture_signals: true,
+            #[cfg(feature = "testing")]
+            hook: None,
         }
+    }
+
+    /// Installs the registry hook. Not public API; see the field.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn __register_hook(mut self, hook: RegistryHook) -> Self {
+        self.hook = Some(hook);
+        self
     }
 
     /// Appends a configuration source. Later sources win, leaf by leaf.
@@ -202,6 +231,14 @@ impl KernelBuilder {
                 "register",
                 KernelError::Register(failures),
             ));
+        }
+
+        // After every bundle, before phase three: a substitution must be seen
+        // by the graph validation, not smuggled past it.
+        #[cfg(feature = "testing")]
+        if let Some(hook) = self.hook {
+            registry.enter_bundle("<substituted>");
+            hook(&mut registry);
         }
         telemetry
             .record(Record::new(Level::Info, REGISTERED).with("bundles", count(manifests.len())));

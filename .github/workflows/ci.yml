@@ -125,6 +125,8 @@ jobs:
         run: ./ci/check_vocabulary.py
       - name: No bundle depends on another bundle
         run: ./ci/check-bundle-graph.sh
+      - name: No production dependency enables kernel/testing
+        run: ./ci/check-testing-feature.sh
 
   without-macros:
     name: suite without the macros crate

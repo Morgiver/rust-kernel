@@ -26,7 +26,9 @@ require_line '^missing_docs[[:space:]]*=[[:space:]]*"deny"' Cargo.toml 'missing_
 require_line '^unsafe_code[[:space:]]*=[[:space:]]*"forbid"' Cargo.toml 'unsafe_code = "forbid"'
 require_line '^all[[:space:]]*=.*level[[:space:]]*=[[:space:]]*"deny"' Cargo.toml 'clippy::all at deny'
 
-for manifest in crates/*/Cargo.toml; do
+# Every workspace member, not only the kernel's own crates: a member outside
+# `crates/` that drops the stanza is exactly as unguarded as one inside it.
+for manifest in crates/*/Cargo.toml examples/*/Cargo.toml; do
   awk '
     /^[[:space:]]*\[/ { section = $0 }
     section == "[lints]" && /^[[:space:]]*workspace[[:space:]]*=[[:space:]]*true/ { found = 1 }
@@ -38,14 +40,14 @@ done
 while IFS= read -r hit; do
   [ -n "$hit" ] || continue
   fail "lint override: $hit"
-done < <(grep -rnE '#!?\[allow\((missing_docs|unsafe_code)' --include='*.rs' crates || true)
+done < <(grep -rnE '#!?\[allow\((missing_docs|unsafe_code)' --include='*.rs' crates examples || true)
 
 # `unsafe_code = "forbid"` already refuses these, but the grep says so without
 # waiting for a compiler that someone may have reconfigured.
 while IFS= read -r hit; do
   [ -n "$hit" ] || continue
   fail "unsafe keyword: $hit"
-done < <(grep -rnw 'unsafe' --include='*.rs' crates || true)
+done < <(grep -rnw 'unsafe' --include='*.rs' crates examples || true)
 
 if [ "$failures" -ne 0 ]; then
   echo "lint guard: $failures violation(s)" >&2

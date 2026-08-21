@@ -19,6 +19,11 @@ set -euo pipefail
 ALLOWLIST=(
   "kernel-core|"
   "kernel|kernel-core,tokio"
+  "kernel-macros|kernel-core,kernel,tokio"
+  "kernel-testkit|kernel-core,kernel,tokio"
+  # Not part of the kernel: an application-layer illustration, free to depend on
+  # whatever an application would.
+  "minimal|*"
 )
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

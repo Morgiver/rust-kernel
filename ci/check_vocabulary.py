@@ -20,6 +20,12 @@ Matching is case insensitive and token bounded: a word matches when it is not
 glued to another alphanumeric run on either side, where a case change counts as
 a boundary. So `http` matches `HttpThing`, `http_thing` and `myHttpThing`, and
 does not match `https` or `restart`. Plural forms need their own entry.
+
+`examples/` is excluded, and it is the only exclusion. The altitude rule holds
+over the kernel's own crates; section 17 of the design is an application-layer
+illustration, and an illustration forbidden from naming an entity of a domain
+illustrates nothing. That exclusion is where the rule stops applying, stated
+here rather than left to the accident of what `SCANNED` happens to reach.
 """
 
 from __future__ import annotations
@@ -33,6 +39,18 @@ ROOT = Path(__file__).resolve().parent.parent
 WORD_LIST = ROOT / "ci" / "forbidden-words.txt"
 SCANNED = ("crates",)
 SUFFIXES = (".rs", ".toml")
+
+# Paths under any of these, relative to the repository root, are never scanned.
+# The application layer is where domain vocabulary belongs; see the module
+# docstring. Kept as an explicit filter so that widening `SCANNED` later cannot
+# silently start failing the example.
+EXCLUDED = ("examples",)
+
+
+def excluded(path: Path) -> bool:
+    """Whether `path` lies under an excluded directory."""
+    parts = path.relative_to(ROOT).parts
+    return any(part in EXCLUDED for part in parts)
 
 
 def load_words(path: Path) -> dict[str, list[str]]:
@@ -158,7 +176,7 @@ def main() -> int:
         path
         for directory in SCANNED
         for path in (ROOT / directory).rglob("*")
-        if path.is_file() and path.suffix in SUFFIXES
+        if path.is_file() and path.suffix in SUFFIXES and not excluded(path)
     )
 
     violations = 0

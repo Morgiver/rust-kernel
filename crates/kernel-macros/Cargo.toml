@@ -1,0 +1,25 @@
+[package]
+name = "kernel-macros"
+description = "Optional derives and declaration sugar for the kernel. Nothing requires them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+
+# Dev only. The macros themselves parse tokens by hand and depend on nothing:
+# these are what the tests need in order to prove that an expansion compiles and
+# behaves, which is the only claim this crate makes.
+[dev-dependencies]
+kernel-core = { workspace = true }
+kernel = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "test-util"] }
+
+[lints]
+workspace = true

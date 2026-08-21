@@ -11,6 +11,15 @@ authors.workspace = true
 [features]
 default = ["signals"]
 signals = ["tokio/signal"]
+# Exposes the low-level hook `kernel-testkit` needs. NEVER enable it from a
+# non-dev dependency: ci/check-testing-feature.sh fails the build if you do.
+#
+# What that guard buys, exactly: in a production graph the feature is off and
+# `__register_hook` does not exist. It does NOT keep the hook out of reach
+# inside `cargo test` of a crate that dev-depends on `kernel-testkit` — cargo
+# unifies features across that build, so the hook is callable there from any
+# test. That is intended; the boundary is the production graph, not the type.
+testing = []
 
 [dependencies]
 kernel-core = { workspace = true }

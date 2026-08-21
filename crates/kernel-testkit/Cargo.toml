@@ -1,0 +1,20 @@
+[package]
+name = "kernel-testkit"
+description = "Test harness for the kernel: substitution, a driven lifecycle, and doubles."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kernel-core = { workspace = true }
+kernel = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
+
+[lints]
+workspace = true
