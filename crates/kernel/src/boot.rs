@@ -212,6 +212,11 @@ pub(crate) async fn boot(
 /// abandoned because another unit overran, so the walk costs the sum of the
 /// per-component budgets in the worst case, and the kernel still never blocks
 /// indefinitely.
+///
+/// Each component is therefore handed a context of its own, carrying the
+/// deadline that budget lands on — see
+/// [`ShutdownContext::deadline`]. `cx` supplies the tables and the ladder; the
+/// deadline is the one thing that is per unit.
 pub(crate) async fn rollback(
     booted: Booted,
     cx: &ShutdownContext<'_>,
@@ -222,7 +227,17 @@ pub(crate) async fn rollback(
 
     for (id, component) in booted.components.into_iter().rev() {
         let budget = allowance(component.descriptor().shutdown_timeout, stop);
-        if let Err(error) = bounded(Some(budget), "shutdown", id, component.shutdown(cx)).await {
+        // The deadline the component reads is the one being enforced on it,
+        // fixed here, where its own budget starts running. Reading it off the
+        // ladder instead would hand every component after the first a figure
+        // pinned before its neighbours were stopped.
+        let unit = ShutdownContext::with_deadline(
+            cx.container(),
+            cx.dispatcher(),
+            cx.shutdown(),
+            (Instant::now() + budget).into_std(),
+        );
+        if let Err(error) = bounded(Some(budget), "shutdown", id, component.shutdown(&unit)).await {
             telemetry.record(
                 Record::new(Level::Error, ROLLBACK_FAILED)
                     .with("component", id.name())
@@ -313,13 +328,15 @@ mod tests {
 
     use kernel_core::{
         BoxFuture, BuildError, ComponentDescriptor, ConfigTree, ContractRef, Event, Flow, Lifetime,
-        ListenerError, Priority, RecordingTelemetry,
+        ListenerError, NoopTelemetry, Priority, RecordingTelemetry,
     };
 
+    use crate::container::Container;
     use crate::dispatcher::{Listener, ListenerContext};
     use crate::provider::Provider;
     use crate::registry::Registry;
     use crate::resolve::resolve;
+    use crate::shutdown::{KernelHandle, Shutdown};
 
     /// Names the test components answer to, indexed by their const parameter.
     const NAMES: [&str; 4] = ["alpha", "beta", "gamma", "delta"];
@@ -683,7 +700,7 @@ mod tests {
             .await
             .expect_err("boot fails");
 
-        // The deaf component is abandoned at the ladder's deadline and still
+        // The deaf component is abandoned at its own deadline and still
         // counts as stopped; the kernel does not wait ten minutes for it.
         assert_eq!(failure.rolled_back, [plan[0]]);
         assert_eq!(trace.entries(), ["boot:alpha", "boot:beta"]);
@@ -701,6 +718,136 @@ mod tests {
 
         assert!(booted.components.is_empty());
         assert!(resolved.container.is_sealed());
+    }
+
+    /// What a stopping component read off its context.
+    #[derive(Clone, Copy)]
+    struct Seen {
+        /// When its `shutdown` was entered.
+        at: Instant,
+        /// What `cx.deadline()` reported: its own budget.
+        own: Option<std::time::Instant>,
+        /// What `cx.shutdown().deadline()` reported: the ladder's stage.
+        ladder: Option<std::time::Instant>,
+    }
+
+    /// A component that reports the two deadlines it was handed.
+    struct Reader(Arc<Mutex<Option<Seen>>>);
+
+    impl Reader {
+        fn id() -> ComponentId {
+            ComponentId::new("reader", 4)
+        }
+    }
+
+    impl Component for Reader {
+        fn name() -> &'static str {
+            "reader"
+        }
+
+        fn descriptor(&self) -> ComponentDescriptor {
+            ComponentDescriptor::new()
+        }
+
+        fn boot<'a>(
+            &'a self,
+            _cx: &'a BootContext<'a>,
+        ) -> BoxFuture<'a, Result<(), ComponentError>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn shutdown<'a>(
+            &'a self,
+            cx: &'a ShutdownContext<'a>,
+        ) -> BoxFuture<'a, Result<(), ComponentError>> {
+            Box::pin(async move {
+                *self.0.lock().expect("seen") = Some(Seen {
+                    at: Instant::now(),
+                    own: cx.deadline(),
+                    ladder: cx.shutdown().deadline(),
+                });
+                Ok(())
+            })
+        }
+    }
+
+    /// Stops a walk of two, the reader last, behind a component that spends
+    /// `spent` of the walk before the reader is even called.
+    async fn walked(
+        container: &Container,
+        dispatcher: &EventDispatcher,
+        shutdown: &Shutdown,
+        spent: Duration,
+    ) -> Seen {
+        let trace = Trace::default();
+        let seen = Arc::new(Mutex::new(None));
+        let booted = Booted {
+            components: vec![
+                (
+                    Reader::id(),
+                    Arc::new(Reader(Arc::clone(&seen))) as Arc<dyn Component>,
+                ),
+                (
+                    Unit::<1>::id(),
+                    Arc::new(Unit::<1>::new(&trace).stopping(Step::Wait(spent))),
+                ),
+            ],
+        };
+
+        let cx = ShutdownContext::new(container, dispatcher, shutdown);
+        let stopped = rollback(booted, &cx, ShutdownPolicy::DEFAULT.stop).await;
+
+        // The reader really was stopped second, which is where the two
+        // deadlines part company.
+        assert_eq!(stopped, [Unit::<1>::id(), Reader::id()]);
+        seen.lock().expect("seen").expect("stopped")
+    }
+
+    fn parts() -> (Container, EventDispatcher) {
+        (
+            Container::new(
+                Vec::new(),
+                Arc::new(ConfigTree::empty()),
+                Arc::new(NoopTelemetry),
+                KernelHandle::detached(),
+            ),
+            EventDispatcher::new(Vec::new(), Arc::new(NoopTelemetry)),
+        )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deadline_is_the_unit_own() {
+        let (container, dispatcher) = parts();
+        let (controller, shutdown) = ShutdownController::new(ShutdownPolicy::DEFAULT);
+        controller.begin_stopping();
+        let spent = Duration::from_secs(5);
+
+        let seen = walked(&container, &dispatcher, &shutdown, spent).await;
+
+        // Its own budget, counted from its own call: what `timeout` enforces on
+        // it, and not the ladder's figure pinned five seconds earlier.
+        assert_eq!(
+            seen.own,
+            Some((seen.at + ShutdownPolicy::DEFAULT.stop).into_std())
+        );
+        assert_ne!(seen.own, seen.ladder);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ladder_deadline_kept() {
+        let (container, dispatcher) = parts();
+        let (controller, shutdown) = ShutdownController::new(ShutdownPolicy::DEFAULT);
+        let opened = Instant::now();
+        controller.begin_stopping();
+
+        let seen = walked(&container, &dispatcher, &shutdown, Duration::from_secs(5)).await;
+
+        // Unchanged: the stage's end, as the ladder reports it to anyone.
+        assert_eq!(seen.ladder, shutdown.deadline());
+        assert_eq!(
+            seen.ladder,
+            Some((opened + ShutdownPolicy::DEFAULT.stop).into_std())
+        );
     }
 
     /// Records its tag whenever the event it watches arrives.

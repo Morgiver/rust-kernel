@@ -28,6 +28,7 @@
 
 use core::fmt;
 use std::sync::Arc;
+use std::time::Instant;
 
 use kernel_core::{
     BoxFuture, ComponentDescriptor, ComponentError, ConfigTree, Extension, Telemetry,
@@ -240,12 +241,24 @@ impl fmt::Debug for BootContext<'_> {
 ///
 /// It carries no extension points: collecting during shutdown would mean a
 /// component is still assembling itself while the process is being torn down.
-/// It carries the [`Shutdown`] watcher instead, so a component can tell how
-/// much of its budget is left.
+/// It carries two time facts instead, and they are not the same fact.
+///
+/// # The ladder says which stage, the deadline says how long
+///
+/// [`shutdown`](Self::shutdown) is the ladder shared by every unit: it reports
+/// WHICH STAGE the kernel is in, and [`Shutdown::deadline`] is when that stage
+/// ends. [`deadline`](Self::deadline) is this component's own: it reports HOW
+/// LONG THIS COMPONENT HAS, counted from the moment its `shutdown` was called
+/// and bounded by the budget actually enforced on it. The shutdown walk gives
+/// each component a budget of its own, so from the second component onwards the
+/// two values differ — reading the ladder's where the component's is meant is
+/// what makes a component hurry for a deadline that is not being enforced on
+/// it.
 pub struct ShutdownContext<'a> {
     container: &'a Container,
     dispatcher: &'a EventDispatcher,
     shutdown: &'a Shutdown,
+    deadline: Option<Instant>,
 }
 
 impl<'a> ShutdownContext<'a> {
@@ -262,6 +275,28 @@ impl<'a> ShutdownContext<'a> {
             container,
             dispatcher,
             shutdown,
+            deadline: None,
+        }
+    }
+
+    /// Assembles a shutdown context carrying the budget enforced on this one
+    /// component.
+    ///
+    /// What the kernel's shutdown walk uses: `deadline` is the instant the
+    /// caller will cut this component off at, so
+    /// [`deadline`](Self::deadline) reports the bound that is actually
+    /// enforced rather than the ladder's.
+    pub fn with_deadline(
+        container: &'a Container,
+        dispatcher: &'a EventDispatcher,
+        shutdown: &'a Shutdown,
+        deadline: Instant,
+    ) -> Self {
+        Self {
+            container,
+            dispatcher,
+            shutdown,
+            deadline: Some(deadline),
         }
     }
 
@@ -294,10 +329,26 @@ impl<'a> ShutdownContext<'a> {
         self.container.telemetry()
     }
 
-    /// The shutdown watcher: which stage is being run, and by when it must end.
+    /// The shutdown watcher: which STAGE is being run, and by when that stage
+    /// must end.
+    ///
+    /// A property of the ladder, shared by every unit. For this component's own
+    /// bound, read [`deadline`](Self::deadline).
     #[must_use]
     pub fn shutdown(&self) -> &Shutdown {
         self.shutdown
+    }
+
+    /// The instant this component's own shutdown must end by.
+    ///
+    /// A property of the UNIT: the budget the caller is enforcing on this one
+    /// component, counted from the moment its `shutdown` was called. `None`
+    /// when the caller bounds nothing, which is what a context built with
+    /// [`new`](Self::new) reports. It is not [`Shutdown::deadline`] and will
+    /// differ from it whenever another unit was stopped first.
+    #[must_use]
+    pub fn deadline(&self) -> Option<Instant> {
+        self.deadline
     }
 }
 
@@ -305,6 +356,7 @@ impl fmt::Debug for ShutdownContext<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ShutdownContext")
             .field("stage", &self.shutdown.stage())
+            .field("deadline", &self.deadline.is_some())
             .finish_non_exhaustive()
     }
 }
