@@ -1,0 +1,25 @@
+[package]
+name = "orders-bundle"
+description = "Application-layer illustration: depends on contracts, never on another bundle."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel = { workspace = true }
+kernel-core = { workspace = true }
+orders-contracts = { path = "../orders-contracts" }
+ledger-contracts = { path = "../ledger-contracts" }
+audit-contracts = { path = "../audit-contracts" }
+# A runnable races the shutdown token against its own timer. The kernel offers
+# neither a timer nor a select, so a bundle that runs anything names the runtime
+# it runs on — exactly as the application does.
+tokio = { workspace = true, features = ["macros", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "ledger-component"
+description = "Application-layer illustration: the block that owns the store."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel = { workspace = true }
+kernel-core = { workspace = true }
+ledger-contracts = { path = "../ledger-contracts" }
+
+[lints]
+workspace = true

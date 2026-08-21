@@ -1,6 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["crates/kernel-core", "crates/kernel", "crates/kernel-macros", "crates/kernel-testkit", "examples/minimal"]
+members = ["crates/kernel-core", "crates/kernel", "crates/kernel-macros", "crates/kernel-testkit", "examples/minimal",
+    "examples/medium/ledger-contracts",
+    "examples/medium/ledger-component",
+    "examples/medium/ledger-bundle",
+    "examples/medium/orders-contracts",
+    "examples/medium/orders-bundle",
+    "examples/medium/audit-contracts",
+    "examples/medium/audit-bundle",
+    "examples/medium/app",
+]
 
 [workspace.package]
 version = "0.1.0"

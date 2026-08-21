@@ -3,6 +3,39 @@
 version = 4
 
 [[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "audit-bundle",
+ "audit-contracts",
+ "kernel",
+ "kernel-core",
+ "kernel-testkit",
+ "ledger-bundle",
+ "ledger-contracts",
+ "orders-bundle",
+ "orders-contracts",
+ "tokio",
+]
+
+[[package]]
+name = "audit-bundle"
+version = "0.1.0"
+dependencies = [
+ "audit-contracts",
+ "kernel",
+ "kernel-core",
+ "tokio",
+]
+
+[[package]]
+name = "audit-contracts"
+version = "0.1.0"
+dependencies = [
+ "kernel-core",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -43,6 +76,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger-bundle"
+version = "0.1.0"
+dependencies = [
+ "kernel",
+ "kernel-core",
+ "ledger-component",
+ "ledger-contracts",
+]
+
+[[package]]
+name = "ledger-component"
+version = "0.1.0"
+dependencies = [
+ "kernel",
+ "kernel-core",
+ "ledger-contracts",
+]
+
+[[package]]
+name = "ledger-contracts"
+version = "0.1.0"
+dependencies = [
+ "kernel-core",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -65,6 +124,25 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys",
+]
+
+[[package]]
+name = "orders-bundle"
+version = "0.1.0"
+dependencies = [
+ "audit-contracts",
+ "kernel",
+ "kernel-core",
+ "ledger-contracts",
+ "orders-contracts",
+ "tokio",
+]
+
+[[package]]
+name = "orders-contracts"
+version = "0.1.0"
+dependencies = [
+ "kernel-core",
 ]
 
 [[package]]

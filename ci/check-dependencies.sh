@@ -24,6 +24,16 @@ ALLOWLIST=(
   # Not part of the kernel: an application-layer illustration, free to depend on
   # whatever an application would.
   "minimal|*"
+  # Same: the medium example is the application layer, and the crate split it
+  # demonstrates is checked by check-bundle-graph.sh, not by this allowlist.
+  "ledger-contracts|*"
+  "ledger-component|*"
+  "ledger-bundle|*"
+  "orders-contracts|*"
+  "orders-bundle|*"
+  "audit-contracts|*"
+  "audit-bundle|*"
+  "app|*"
 )
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -28,13 +28,16 @@ require_line '^all[[:space:]]*=.*level[[:space:]]*=[[:space:]]*"deny"' Cargo.tom
 
 # Every workspace member, not only the kernel's own crates: a member outside
 # `crates/` that drops the stanza is exactly as unguarded as one inside it.
-for manifest in crates/*/Cargo.toml examples/*/Cargo.toml; do
+# `examples/` is walked rather than globbed: the medium example nests its crates
+# one level deeper (`examples/medium/<crate>/Cargo.toml`) and has no manifest of
+# its own, so a fixed-depth glob reports ok while skipping every crate under it.
+while IFS= read -r manifest; do
   awk '
     /^[[:space:]]*\[/ { section = $0 }
     section == "[lints]" && /^[[:space:]]*workspace[[:space:]]*=[[:space:]]*true/ { found = 1 }
     END { exit found ? 0 : 1 }
   ' "$manifest" || fail "$manifest does not inherit the workspace lints ([lints] workspace = true)"
-done
+done < <(find crates examples -name Cargo.toml -not -path '*/target/*' | sort)
 
 # An `allow` on either lint puts the boundary back to a matter of vigilance.
 while IFS= read -r hit; do

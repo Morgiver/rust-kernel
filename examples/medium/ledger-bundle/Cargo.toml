@@ -1,0 +1,17 @@
+[package]
+name = "ledger-bundle"
+description = "Application-layer illustration: registers the ledger."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel = { workspace = true }
+kernel-core = { workspace = true }
+ledger-contracts = { path = "../ledger-contracts" }
+ledger-component = { path = "../ledger-component" }
+
+[lints]
+workspace = true

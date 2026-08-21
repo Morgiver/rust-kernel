@@ -1,0 +1,29 @@
+[package]
+name = "app"
+description = "Application-layer illustration: the only place the bundles meet."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kernel = { workspace = true }
+kernel-core = { workspace = true }
+ledger-bundle = { path = "../ledger-bundle" }
+orders-bundle = { path = "../orders-bundle" }
+audit-bundle = { path = "../audit-bundle" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time"] }
+
+[dev-dependencies]
+kernel-testkit = { workspace = true }
+# The tests name the contracts, never the bundles that implement them: a double
+# is written against `dyn Ledger` and `dyn Sink`, and the crate that provides
+# them for real is not on this list.
+ledger-contracts = { path = "../ledger-contracts" }
+orders-contracts = { path = "../orders-contracts" }
+audit-contracts = { path = "../audit-contracts" }
+tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }
+
+[lints]
+workspace = true
