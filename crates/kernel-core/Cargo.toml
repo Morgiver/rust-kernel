@@ -1,0 +1,14 @@
+[package]
+name = "kernel-core"
+description = "Runtime-free surfaces of the kernel: ids, errors, configuration, telemetry, descriptors."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
