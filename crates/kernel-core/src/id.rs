@@ -5,9 +5,9 @@
 //! * **Type identities** — [`ContractId`], [`ContractRef`] and [`ExtensionId`]
 //!   name a trait or a type. They are derived from [`TypeId`], so they are
 //!   stable within one build and need no registry of strings.
-//! * **Unit identities** — [`BundleId`], [`ComponentId`] and [`RunnableId`]
-//!   name a registered unit. They pair the declared name with the registration
-//!   index, so that two units declared with the same name stay distinguishable.
+//! * **Unit identities** — [`ComponentId`] and [`RunnableId`] name a
+//!   registered unit. They pair the declared name with the registration index,
+//!   so that two units declared with the same name stay distinguishable.
 //!
 //! [`ContractId`] and [`ContractRef`] carry the same information but are not
 //! interchangeable: `TypeId::of` is not callable from a `const` context on the
@@ -300,7 +300,6 @@ macro_rules! unit_id {
     };
 }
 
-unit_id!(BundleId, "bundle");
 unit_id!(ComponentId, "component");
 unit_id!(RunnableId, "runnable");
 
@@ -415,7 +414,6 @@ mod tests {
 
     #[test]
     fn unit_ids_display() {
-        assert_eq!(BundleId::new("alpha", 0).to_string(), "alpha#0");
         assert_eq!(ComponentId::new("beta", 7).to_string(), "beta#7");
         assert_eq!(RunnableId::new("gamma", 12).to_string(), "gamma#12");
     }
@@ -435,7 +433,7 @@ mod tests {
 
     #[test]
     fn unit_id_is_const() {
-        const ID: BundleId = BundleId::new("alpha", 3);
+        const ID: RunnableId = RunnableId::new("alpha", 3);
         static IDS: &[ComponentId] = &[ComponentId::new("beta", 0)];
 
         assert_eq!(ID.index(), 3);

@@ -32,7 +32,7 @@ pub use event::{Event, Flow};
 pub use extension::Extension;
 pub use future::{BoxFuture, YieldNow, yield_now};
 pub use health::{Health, HealthProbe};
-pub use id::{BundleId, ComponentId, ContractId, ContractRef, ExtensionId, RunnableId};
+pub use id::{ComponentId, ContractId, ContractRef, ExtensionId, RunnableId};
 pub use telemetry::{
     Field, FieldValue, Level, NoopTelemetry, Record, RecordingTelemetry, StderrTelemetry, Telemetry,
 };

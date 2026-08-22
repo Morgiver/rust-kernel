@@ -1478,4 +1478,45 @@ mod tests {
         fn assert_shared<T: Send + Sync + 'static>(_: &T) {}
         assert_shared(&attached(Vec::new()));
     }
+
+    /// A container handed to the builder is the one the context reads, and its
+    /// own configuration and telemetry win over anything else set on it.
+    #[test]
+    fn builder_takes_a_container() {
+        let telemetry = Arc::new(RecordingTelemetry::new());
+        let given = container_with(telemetry.clone());
+        let ignored = Arc::new(NoopTelemetry) as Arc<dyn Telemetry>;
+
+        let detached = ListenerContext::builder()
+            .with_container(given)
+            .with_telemetry(ignored)
+            .build();
+        let cx = detached.context();
+
+        cx.telemetry().record(Record::new(Level::Info, "probe"));
+        assert!(telemetry.contains("probe"));
+    }
+
+    /// With no container, the telemetry set on the builder is the one the
+    /// context reports.
+    #[test]
+    fn builder_takes_a_telemetry() {
+        let telemetry = Arc::new(RecordingTelemetry::new());
+
+        let detached = ListenerContext::builder()
+            .with_telemetry(telemetry.clone() as Arc<dyn Telemetry>)
+            .build();
+
+        detached
+            .context()
+            .telemetry()
+            .record(Record::new(Level::Info, "probe"));
+        assert!(telemetry.contains("probe"));
+    }
+
+    #[test]
+    fn builder_reports_its_parts() {
+        assert!(format!("{:?}", ListenerContext::builder()).contains("ListenBuilder"));
+        assert!(format!("{:?}", ListenBuilder::default()).contains("container"));
+    }
 }

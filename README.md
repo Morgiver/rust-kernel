@@ -211,7 +211,7 @@ removed.
 
 ## Guards
 
-A boundary that is asserted but not verified does not exist. Seven of them are
+A boundary that is asserted but not verified does not exist. Eight of them are
 executable scripts you can run and watch fail:
 
 | Boundary | Script |
@@ -223,6 +223,7 @@ executable scripts you can run and watch fail:
 | Macros are never load-bearing | `ci/check-without-macros.sh` |
 | The lint configuration that holds the rest is still declared | `ci/check-lints.sh` |
 | The licence files match what `Cargo.toml` claims | `ci/check-licenses.sh` |
+| The public surface matches the committed baseline | `ci/check-public-api.sh` against `api/*.txt` |
 
 `ci/msrv.sh` is not a guard: it reads `rust-version` out of `Cargo.toml` so that
 no other script hardcodes it.
@@ -238,6 +239,30 @@ and there is nothing to execute that reports them green:
 `missing_docs = "deny"` sits in both halves: `ci/check-lints.sh` verifies the
 declaration is still there, and the rustdoc job is what actually fails on an
 undocumented item.
+
+### The public surface baseline
+
+`api/*.txt` lists every public item of the four kernel crates, one file per
+crate — plus a second file for `kernel` with `testing` on, so that an item
+moving behind a feature gate is a visible change rather than no change at all.
+The files are written by `cargo-public-api` under a pinned nightly, both pins
+living in `ci/check-public-api.sh`, and `./ci/check-public-api.sh --bless`
+rewrites them.
+
+The baseline is a **change detector**, and nothing more. It exists because two
+waves reshaped the public surface without anyone measuring it, and three
+separate audits then found unreachable public items by accident. When the
+surface moves, the guard fails and prints the diff; the only way past it is to
+regenerate the baseline in the same commit, which puts the added or removed
+item in front of a reviewer next to the code that moved it. A surface change
+becomes deliberate instead of silent.
+
+It is **not** a semver promise, **not** a stability guarantee and **not** a
+deprecation policy. Every kernel crate carries `publish = false`, there is no
+crates.io release and none is planned. Nothing outside this repository consumes
+these names, so a line in `api/` records what the surface is today; it commits
+nobody to keeping it tomorrow, and items are removed from it whenever they turn
+out to have no caller.
 
 The [CI workflow](.github/workflows/ci.yml) runs those plus formatting, clippy
 with `-D warnings` (all features and none), the test suite, a no-default-features
@@ -260,10 +285,16 @@ cargo fmt --all --check
 ./ci/check-bundle-graph.sh   # bundle isolation
 ./ci/check-testing-feature.sh # kernel/testing is off in every production graph
 ./ci/check-without-macros.sh # the suite without kernel-macros
+./ci/check-public-api.sh     # public surface matches api/*.txt
 ```
 
 `cargo-deny` is not vendored; install it with `cargo install cargo-deny --locked`
 if you want to run `cargo deny --all-features check --deny warnings` locally.
+
+Neither is `cargo-public-api`. `./ci/check-public-api.sh` tells you the exact
+`cargo install` line and the exact `rustup toolchain install` line it wants, and
+refuses to run against any other version of either — a baseline diffed with a
+different tool or a different nightly reports the tool, not the code.
 
 ---
 

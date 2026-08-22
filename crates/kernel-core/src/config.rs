@@ -928,6 +928,18 @@ mod tests {
         assert_eq!(t, before);
     }
 
+    /// An explicit null is a node like any other: it exists, and says so.
+    #[test]
+    fn null_is_recognised() {
+        assert!(ConfigNode::null().is_null());
+        assert!(!ConfigNode::from("x").is_null());
+        assert!(!ConfigNode::map().is_null());
+
+        let mut tree = ConfigTree::empty();
+        tree.insert("absent", ConfigNode::null()).unwrap();
+        assert!(tree.get("absent").unwrap().is_null());
+    }
+
     #[test]
     fn reads_scalars() {
         assert!(ConfigNode::from(true).as_bool().unwrap());

@@ -1455,7 +1455,29 @@ mod tests {
         assert_eq!(cx.deadline(), Some(deadline));
         assert_ne!(cx.shutdown().deadline(), cx.deadline());
         assert!(!cx.container().handle().is_shutting_down());
-        let _ = detached.container();
         assert!(format!("{:?}", ShutdownContext::builder()).contains("ShutdownBuilder"));
+    }
+
+    /// `container()` hands back the container that was given, not one the
+    /// builder made: the handle already carries a request, and both readers
+    /// see it.
+    #[tokio::test]
+    async fn detached_holds_the_given_container() {
+        let handle = KernelHandle::detached();
+        handle.shutdown();
+        let given = Container::new(
+            Vec::new(),
+            Arc::new(ConfigTree::empty()),
+            Arc::new(NoopTelemetry),
+            handle,
+        );
+
+        let (detached, _controller) = ShutdownContext::builder().with_container(given).build();
+
+        assert!(detached.container().handle().is_shutting_down());
+        assert!(detached.context().container().handle().is_shutting_down());
+
+        let (bare, _bare_controller) = ShutdownContext::detached();
+        assert!(!bare.container().handle().is_shutting_down());
     }
 }

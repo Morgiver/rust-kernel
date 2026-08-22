@@ -1,0 +1,2636 @@
+pub mod kernel_core
+pub mod kernel_core::config
+pub enum kernel_core::config::ConfigNode
+pub kernel_core::config::ConfigNode::Map(alloc::collections::btree::map::BTreeMap<alloc::string::String, kernel_core::config::ConfigNode>)
+pub kernel_core::config::ConfigNode::Scalar(kernel_core::config::Scalar)
+pub kernel_core::config::ConfigNode::Seq(alloc::vec::Vec<kernel_core::config::ConfigNode>)
+impl kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::as_bool(&self) -> core::result::Result<bool, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::as_f64(&self) -> core::result::Result<f64, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::as_i64(&self) -> core::result::Result<i64, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::as_str(&self) -> core::result::Result<&str, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::field<T: kernel_core::config::FromConfig>(&self, &str) -> core::result::Result<T, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::get(&self, &str) -> core::option::Option<&kernel_core::config::ConfigNode>
+pub fn kernel_core::config::ConfigNode::is_null(&self) -> bool
+pub fn kernel_core::config::ConfigNode::kind_name(&self) -> &'static str
+pub fn kernel_core::config::ConfigNode::map() -> Self
+pub fn kernel_core::config::ConfigNode::null() -> Self
+impl core::clone::Clone for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::clone(&self) -> kernel_core::config::ConfigNode
+impl core::cmp::PartialEq for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::eq(&self, &kernel_core::config::ConfigNode) -> bool
+impl core::convert::From<&str> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(alloc::string::String) -> Self
+impl core::convert::From<bool> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(bool) -> Self
+impl core::convert::From<f64> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(f64) -> Self
+impl core::convert::From<i64> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(i64) -> Self
+impl core::fmt::Debug for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::config::ConfigNode
+impl kernel_core::config::FromConfig for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl core::marker::Freeze for kernel_core::config::ConfigNode
+impl core::marker::Send for kernel_core::config::ConfigNode
+impl core::marker::Sync for kernel_core::config::ConfigNode
+impl core::marker::Unpin for kernel_core::config::ConfigNode
+impl core::marker::UnsafeUnpin for kernel_core::config::ConfigNode
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::config::ConfigNode
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::config::ConfigNode
+pub enum kernel_core::config::Scalar
+pub kernel_core::config::Scalar::Bool(bool)
+pub kernel_core::config::Scalar::Float(f64)
+pub kernel_core::config::Scalar::Int(i64)
+pub kernel_core::config::Scalar::Null
+pub kernel_core::config::Scalar::Str(alloc::string::String)
+impl kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::kind_name(&self) -> &'static str
+impl core::clone::Clone for kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::clone(&self) -> kernel_core::config::Scalar
+impl core::cmp::PartialEq for kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::eq(&self, &kernel_core::config::Scalar) -> bool
+impl core::fmt::Debug for kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::config::Scalar
+impl core::marker::Freeze for kernel_core::config::Scalar
+impl core::marker::Send for kernel_core::config::Scalar
+impl core::marker::Sync for kernel_core::config::Scalar
+impl core::marker::Unpin for kernel_core::config::Scalar
+impl core::marker::UnsafeUnpin for kernel_core::config::Scalar
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::config::Scalar
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::config::Scalar
+pub struct kernel_core::config::ConfigTree
+impl kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::empty() -> Self
+pub fn kernel_core::config::ConfigTree::from_node(kernel_core::config::ConfigNode) -> Self
+pub fn kernel_core::config::ConfigTree::get(&self, &str) -> core::option::Option<&kernel_core::config::ConfigNode>
+pub fn kernel_core::config::ConfigTree::insert(&mut self, &str, kernel_core::config::ConfigNode) -> core::result::Result<(), kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigTree::into_root(self) -> kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigTree::merge(&mut self, kernel_core::config::ConfigTree)
+pub fn kernel_core::config::ConfigTree::root(&self) -> &kernel_core::config::ConfigNode
+impl core::clone::Clone for kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::clone(&self) -> kernel_core::config::ConfigTree
+impl core::cmp::PartialEq for kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::eq(&self, &kernel_core::config::ConfigTree) -> bool
+impl core::default::Default for kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::default() -> Self
+impl core::fmt::Debug for kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::config::ConfigTree
+impl core::marker::Freeze for kernel_core::config::ConfigTree
+impl core::marker::Send for kernel_core::config::ConfigTree
+impl core::marker::Sync for kernel_core::config::ConfigTree
+impl core::marker::Unpin for kernel_core::config::ConfigTree
+impl core::marker::UnsafeUnpin for kernel_core::config::ConfigTree
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::config::ConfigTree
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::config::ConfigTree
+pub struct kernel_core::config::Secret<T>(_)
+impl<T> kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::expose(&self) -> &T
+pub fn kernel_core::config::Secret<T>::into_inner(self) -> T
+pub fn kernel_core::config::Secret<T>::new(T) -> Self
+impl<T: core::clone::Clone> core::clone::Clone for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::clone(&self) -> kernel_core::config::Secret<T>
+impl<T: core::cmp::Eq> core::cmp::Eq for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::assert_fields_are_eq(&self)
+impl<T: core::cmp::Ord> core::cmp::Ord for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::cmp(&self, &kernel_core::config::Secret<T>) -> core::cmp::Ordering
+impl<T: core::cmp::PartialEq> core::cmp::PartialEq for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::eq(&self, &kernel_core::config::Secret<T>) -> bool
+impl<T: core::cmp::PartialEq> core::marker::StructuralPartialEq for kernel_core::config::Secret<T>
+impl<T: core::cmp::PartialOrd> core::cmp::PartialOrd for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::partial_cmp(&self, &kernel_core::config::Secret<T>) -> core::option::Option<core::cmp::Ordering>
+impl<T: core::default::Default> core::default::Default for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::default() -> kernel_core::config::Secret<T>
+impl<T: core::hash::Hash> core::hash::Hash for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<T: core::marker::Copy> core::marker::Copy for kernel_core::config::Secret<T>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T> core::convert::From<T> for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::from(T) -> Self
+impl<T> core::fmt::Debug for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::fmt::Display for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::marker::Freeze for kernel_core::config::Secret<T> where T: core::marker::Freeze
+impl<T> core::marker::Send for kernel_core::config::Secret<T> where T: core::marker::Send
+impl<T> core::marker::Sync for kernel_core::config::Secret<T> where T: core::marker::Sync
+impl<T> core::marker::Unpin for kernel_core::config::Secret<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for kernel_core::config::Secret<T> where T: core::marker::UnsafeUnpin
+impl<T> core::panic::unwind_safe::RefUnwindSafe for kernel_core::config::Secret<T> where T: core::panic::unwind_safe::RefUnwindSafe
+impl<T> core::panic::unwind_safe::UnwindSafe for kernel_core::config::Secret<T> where T: core::panic::unwind_safe::UnwindSafe
+pub trait kernel_core::config::ConfigSource: core::marker::Send + core::marker::Sync + 'static
+pub fn kernel_core::config::ConfigSource::load(&self) -> core::result::Result<kernel_core::config::ConfigTree, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigSource::name(&self) -> &'static str
+pub trait kernel_core::config::FromConfig: core::marker::Sized
+pub fn kernel_core::config::FromConfig::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for alloc::string::String
+pub fn alloc::string::String::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for bool
+pub fn bool::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for core::time::Duration
+pub fn core::time::Duration::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for f32
+pub fn f32::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for f64
+pub fn f64::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for i16
+pub fn i16::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for i32
+pub fn i32::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for i64
+pub fn i64::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for i8
+pub fn i8::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for isize
+pub fn isize::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for u16
+pub fn u16::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for u32
+pub fn u32::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for u64
+pub fn u64::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for u8
+pub fn u8::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for usize
+pub fn usize::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for alloc::collections::btree::map::BTreeMap<alloc::string::String, T>
+pub fn alloc::collections::btree::map::BTreeMap<alloc::string::String, T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for alloc::vec::Vec<T>
+pub fn alloc::vec::Vec<T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for core::option::Option<T>
+pub fn core::option::Option<T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+pub mod kernel_core::descriptor
+pub enum kernel_core::descriptor::Backoff
+pub kernel_core::descriptor::Backoff::Exponential
+pub kernel_core::descriptor::Backoff::Exponential::factor: f64
+pub kernel_core::descriptor::Backoff::Exponential::initial: core::time::Duration
+pub kernel_core::descriptor::Backoff::Exponential::max: core::time::Duration
+pub kernel_core::descriptor::Backoff::Fixed(core::time::Duration)
+impl kernel_core::descriptor::Backoff
+pub const kernel_core::descriptor::Backoff::NONE: kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::delay(&self, u32) -> core::time::Duration
+pub fn kernel_core::descriptor::Backoff::with_jitter(core::time::Duration, u64) -> core::time::Duration
+impl core::clone::Clone for kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::clone(&self) -> kernel_core::descriptor::Backoff
+impl core::clone::TrivialClone for kernel_core::descriptor::Backoff
+impl core::cmp::PartialEq for kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::eq(&self, &kernel_core::descriptor::Backoff) -> bool
+impl core::default::Default for kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::default() -> Self
+impl core::fmt::Debug for kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::descriptor::Backoff
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Backoff
+impl core::marker::Freeze for kernel_core::descriptor::Backoff
+impl core::marker::Send for kernel_core::descriptor::Backoff
+impl core::marker::Sync for kernel_core::descriptor::Backoff
+impl core::marker::Unpin for kernel_core::descriptor::Backoff
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Backoff
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Backoff
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Backoff
+pub enum kernel_core::descriptor::Criticality
+pub kernel_core::descriptor::Criticality::Ancillary
+pub kernel_core::descriptor::Criticality::Essential
+impl kernel_core::descriptor::Criticality
+pub const fn kernel_core::descriptor::Criticality::as_str(&self) -> &'static str
+impl core::clone::Clone for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::clone(&self) -> kernel_core::descriptor::Criticality
+impl core::clone::TrivialClone for kernel_core::descriptor::Criticality
+impl core::cmp::Eq for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::eq(&self, &kernel_core::descriptor::Criticality) -> bool
+impl core::default::Default for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::default() -> kernel_core::descriptor::Criticality
+impl core::fmt::Debug for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::Criticality
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Criticality
+impl core::marker::Freeze for kernel_core::descriptor::Criticality
+impl core::marker::Send for kernel_core::descriptor::Criticality
+impl core::marker::Sync for kernel_core::descriptor::Criticality
+impl core::marker::Unpin for kernel_core::descriptor::Criticality
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Criticality
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Criticality
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Criticality
+pub enum kernel_core::descriptor::Lifetime
+pub kernel_core::descriptor::Lifetime::Factory
+pub kernel_core::descriptor::Lifetime::Scoped
+pub kernel_core::descriptor::Lifetime::Shared
+impl kernel_core::descriptor::Lifetime
+pub const fn kernel_core::descriptor::Lifetime::as_str(&self) -> &'static str
+impl core::clone::Clone for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::clone(&self) -> kernel_core::descriptor::Lifetime
+impl core::clone::TrivialClone for kernel_core::descriptor::Lifetime
+impl core::cmp::Eq for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::eq(&self, &kernel_core::descriptor::Lifetime) -> bool
+impl core::default::Default for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::default() -> kernel_core::descriptor::Lifetime
+impl core::fmt::Debug for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::Lifetime
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Lifetime
+impl core::marker::Freeze for kernel_core::descriptor::Lifetime
+impl core::marker::Send for kernel_core::descriptor::Lifetime
+impl core::marker::Sync for kernel_core::descriptor::Lifetime
+impl core::marker::Unpin for kernel_core::descriptor::Lifetime
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Lifetime
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Lifetime
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Lifetime
+pub enum kernel_core::descriptor::RestartPolicy
+pub kernel_core::descriptor::RestartPolicy::Never
+pub kernel_core::descriptor::RestartPolicy::OnFailure
+pub kernel_core::descriptor::RestartPolicy::OnFailure::backoff: kernel_core::descriptor::Backoff
+pub kernel_core::descriptor::RestartPolicy::OnFailure::max_attempts: u32
+impl kernel_core::descriptor::RestartPolicy
+pub const fn kernel_core::descriptor::RestartPolicy::allows(&self, u32) -> bool
+pub const fn kernel_core::descriptor::RestartPolicy::on_failure(u32, kernel_core::descriptor::Backoff) -> Self
+impl core::clone::Clone for kernel_core::descriptor::RestartPolicy
+pub fn kernel_core::descriptor::RestartPolicy::clone(&self) -> kernel_core::descriptor::RestartPolicy
+impl core::clone::TrivialClone for kernel_core::descriptor::RestartPolicy
+impl core::cmp::PartialEq for kernel_core::descriptor::RestartPolicy
+pub fn kernel_core::descriptor::RestartPolicy::eq(&self, &kernel_core::descriptor::RestartPolicy) -> bool
+impl core::default::Default for kernel_core::descriptor::RestartPolicy
+pub fn kernel_core::descriptor::RestartPolicy::default() -> kernel_core::descriptor::RestartPolicy
+impl core::fmt::Debug for kernel_core::descriptor::RestartPolicy
+pub fn kernel_core::descriptor::RestartPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::descriptor::RestartPolicy
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::RestartPolicy
+impl core::marker::Freeze for kernel_core::descriptor::RestartPolicy
+impl core::marker::Send for kernel_core::descriptor::RestartPolicy
+impl core::marker::Sync for kernel_core::descriptor::RestartPolicy
+impl core::marker::Unpin for kernel_core::descriptor::RestartPolicy
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::RestartPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::RestartPolicy
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::RestartPolicy
+pub enum kernel_core::descriptor::Stage
+pub kernel_core::descriptor::Stage::Draining
+pub kernel_core::descriptor::Stage::Running
+pub kernel_core::descriptor::Stage::Stopped
+pub kernel_core::descriptor::Stage::Stopping
+impl kernel_core::descriptor::Stage
+pub const fn kernel_core::descriptor::Stage::as_str(&self) -> &'static str
+pub const fn kernel_core::descriptor::Stage::is_shutting_down(&self) -> bool
+pub const fn kernel_core::descriptor::Stage::is_terminal(&self) -> bool
+impl core::clone::Clone for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::clone(&self) -> kernel_core::descriptor::Stage
+impl core::clone::TrivialClone for kernel_core::descriptor::Stage
+impl core::cmp::Eq for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::assert_fields_are_eq(&self)
+impl core::cmp::Ord for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::cmp(&self, &kernel_core::descriptor::Stage) -> core::cmp::Ordering
+impl core::cmp::PartialEq for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::eq(&self, &kernel_core::descriptor::Stage) -> bool
+impl core::cmp::PartialOrd for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::partial_cmp(&self, &kernel_core::descriptor::Stage) -> core::option::Option<core::cmp::Ordering>
+impl core::default::Default for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::default() -> kernel_core::descriptor::Stage
+impl core::fmt::Debug for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::Stage
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Stage
+impl core::marker::Freeze for kernel_core::descriptor::Stage
+impl core::marker::Send for kernel_core::descriptor::Stage
+impl core::marker::Sync for kernel_core::descriptor::Stage
+impl core::marker::Unpin for kernel_core::descriptor::Stage
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Stage
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Stage
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Stage
+pub struct kernel_core::descriptor::BundleManifest
+pub kernel_core::descriptor::BundleManifest::after: &'static [&'static str]
+pub kernel_core::descriptor::BundleManifest::name: &'static str
+pub kernel_core::descriptor::BundleManifest::requires: &'static [kernel_core::id::ContractRef]
+pub kernel_core::descriptor::BundleManifest::version: &'static str
+impl kernel_core::descriptor::BundleManifest
+pub const fn kernel_core::descriptor::BundleManifest::after(self, &'static [&'static str]) -> Self
+pub const fn kernel_core::descriptor::BundleManifest::new(&'static str, &'static str) -> Self
+pub const fn kernel_core::descriptor::BundleManifest::requires(self, &'static [kernel_core::id::ContractRef]) -> Self
+impl core::clone::Clone for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::clone(&self) -> kernel_core::descriptor::BundleManifest
+impl core::clone::TrivialClone for kernel_core::descriptor::BundleManifest
+impl core::cmp::Eq for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::eq(&self, &kernel_core::descriptor::BundleManifest) -> bool
+impl core::fmt::Debug for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::BundleManifest
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::BundleManifest
+impl core::marker::Freeze for kernel_core::descriptor::BundleManifest
+impl core::marker::Send for kernel_core::descriptor::BundleManifest
+impl core::marker::Sync for kernel_core::descriptor::BundleManifest
+impl core::marker::Unpin for kernel_core::descriptor::BundleManifest
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::BundleManifest
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::BundleManifest
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::BundleManifest
+pub struct kernel_core::descriptor::ComponentDescriptor
+pub kernel_core::descriptor::ComponentDescriptor::boot_timeout: core::option::Option<core::time::Duration>
+pub kernel_core::descriptor::ComponentDescriptor::shutdown_timeout: core::option::Option<core::time::Duration>
+impl kernel_core::descriptor::ComponentDescriptor
+pub const fn kernel_core::descriptor::ComponentDescriptor::boot_timeout(self, core::time::Duration) -> Self
+pub const fn kernel_core::descriptor::ComponentDescriptor::new() -> Self
+pub const fn kernel_core::descriptor::ComponentDescriptor::shutdown_timeout(self, core::time::Duration) -> Self
+impl core::clone::Clone for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::clone(&self) -> kernel_core::descriptor::ComponentDescriptor
+impl core::clone::TrivialClone for kernel_core::descriptor::ComponentDescriptor
+impl core::cmp::Eq for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::eq(&self, &kernel_core::descriptor::ComponentDescriptor) -> bool
+impl core::default::Default for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::default() -> kernel_core::descriptor::ComponentDescriptor
+impl core::fmt::Debug for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::Freeze for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::Send for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::Sync for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::Unpin for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::ComponentDescriptor
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::ComponentDescriptor
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::ComponentDescriptor
+pub struct kernel_core::descriptor::Priority(pub i32)
+impl kernel_core::descriptor::Priority
+pub const kernel_core::descriptor::Priority::HIGH: kernel_core::descriptor::Priority
+pub const kernel_core::descriptor::Priority::LOW: kernel_core::descriptor::Priority
+pub const kernel_core::descriptor::Priority::NORMAL: kernel_core::descriptor::Priority
+pub const fn kernel_core::descriptor::Priority::get(&self) -> i32
+pub const fn kernel_core::descriptor::Priority::new(i32) -> Self
+impl core::clone::Clone for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::clone(&self) -> kernel_core::descriptor::Priority
+impl core::clone::TrivialClone for kernel_core::descriptor::Priority
+impl core::cmp::Eq for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::assert_fields_are_eq(&self)
+impl core::cmp::Ord for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::cmp(&self, &kernel_core::descriptor::Priority) -> core::cmp::Ordering
+impl core::cmp::PartialEq for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::eq(&self, &kernel_core::descriptor::Priority) -> bool
+impl core::cmp::PartialOrd for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::partial_cmp(&self, &kernel_core::descriptor::Priority) -> core::option::Option<core::cmp::Ordering>
+impl core::default::Default for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::default() -> kernel_core::descriptor::Priority
+impl core::fmt::Debug for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::Priority
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Priority
+impl core::marker::Freeze for kernel_core::descriptor::Priority
+impl core::marker::Send for kernel_core::descriptor::Priority
+impl core::marker::Sync for kernel_core::descriptor::Priority
+impl core::marker::Unpin for kernel_core::descriptor::Priority
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Priority
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Priority
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Priority
+pub struct kernel_core::descriptor::RunnableDescriptor
+pub kernel_core::descriptor::RunnableDescriptor::criticality: kernel_core::descriptor::Criticality
+pub kernel_core::descriptor::RunnableDescriptor::drain_timeout: core::option::Option<core::time::Duration>
+pub kernel_core::descriptor::RunnableDescriptor::restart: kernel_core::descriptor::RestartPolicy
+pub kernel_core::descriptor::RunnableDescriptor::stop_timeout: core::option::Option<core::time::Duration>
+impl kernel_core::descriptor::RunnableDescriptor
+pub const fn kernel_core::descriptor::RunnableDescriptor::criticality(self, kernel_core::descriptor::Criticality) -> Self
+pub const fn kernel_core::descriptor::RunnableDescriptor::drain_timeout(self, core::time::Duration) -> Self
+pub const fn kernel_core::descriptor::RunnableDescriptor::new() -> Self
+pub const fn kernel_core::descriptor::RunnableDescriptor::restart(self, kernel_core::descriptor::RestartPolicy) -> Self
+pub const fn kernel_core::descriptor::RunnableDescriptor::stop_timeout(self, core::time::Duration) -> Self
+impl core::clone::Clone for kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_core::descriptor::RunnableDescriptor::clone(&self) -> kernel_core::descriptor::RunnableDescriptor
+impl core::clone::TrivialClone for kernel_core::descriptor::RunnableDescriptor
+impl core::cmp::PartialEq for kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_core::descriptor::RunnableDescriptor::eq(&self, &kernel_core::descriptor::RunnableDescriptor) -> bool
+impl core::default::Default for kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_core::descriptor::RunnableDescriptor::default() -> Self
+impl core::fmt::Debug for kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_core::descriptor::RunnableDescriptor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::Freeze for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::Send for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::Sync for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::Unpin for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::RunnableDescriptor
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::RunnableDescriptor
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::RunnableDescriptor
+pub struct kernel_core::descriptor::ShutdownPolicy
+pub kernel_core::descriptor::ShutdownPolicy::drain: core::time::Duration
+pub kernel_core::descriptor::ShutdownPolicy::stop: core::time::Duration
+impl kernel_core::descriptor::ShutdownPolicy
+pub const kernel_core::descriptor::ShutdownPolicy::DEFAULT: kernel_core::descriptor::ShutdownPolicy
+pub const fn kernel_core::descriptor::ShutdownPolicy::budget(&self, kernel_core::descriptor::Stage) -> core::option::Option<core::time::Duration>
+pub const fn kernel_core::descriptor::ShutdownPolicy::new(core::time::Duration, core::time::Duration) -> Self
+pub fn kernel_core::descriptor::ShutdownPolicy::total(&self) -> core::time::Duration
+impl core::clone::Clone for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::clone(&self) -> kernel_core::descriptor::ShutdownPolicy
+impl core::clone::TrivialClone for kernel_core::descriptor::ShutdownPolicy
+impl core::cmp::Eq for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::eq(&self, &kernel_core::descriptor::ShutdownPolicy) -> bool
+impl core::default::Default for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::default() -> Self
+impl core::fmt::Debug for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::Freeze for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::Send for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::Sync for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::Unpin for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::ShutdownPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::ShutdownPolicy
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::ShutdownPolicy
+pub mod kernel_core::error
+pub enum kernel_core::error::AbortReason
+pub kernel_core::error::AbortReason::DeadlineExceeded
+pub kernel_core::error::AbortReason::ShutdownRequested
+impl kernel_core::error::AbortReason
+pub const fn kernel_core::error::AbortReason::as_str(self) -> &'static str
+impl core::clone::Clone for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::clone(&self) -> kernel_core::error::AbortReason
+impl core::clone::TrivialClone for kernel_core::error::AbortReason
+impl core::cmp::Eq for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::eq(&self, &kernel_core::error::AbortReason) -> bool
+impl core::convert::From<kernel_core::error::AbortReason> for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::from(kernel_core::error::AbortReason) -> Self
+impl core::fmt::Debug for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::error::AbortReason
+impl core::marker::StructuralPartialEq for kernel_core::error::AbortReason
+impl core::marker::Freeze for kernel_core::error::AbortReason
+impl core::marker::Send for kernel_core::error::AbortReason
+impl core::marker::Sync for kernel_core::error::AbortReason
+impl core::marker::Unpin for kernel_core::error::AbortReason
+impl core::marker::UnsafeUnpin for kernel_core::error::AbortReason
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::AbortReason
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::error::AbortReason
+pub enum kernel_core::error::ConfigErrorKind
+pub kernel_core::error::ConfigErrorKind::Invalid(alloc::string::String)
+pub kernel_core::error::ConfigErrorKind::Missing
+pub kernel_core::error::ConfigErrorKind::Source(kernel_core::error::BoxSource)
+pub kernel_core::error::ConfigErrorKind::TypeMismatch
+pub kernel_core::error::ConfigErrorKind::TypeMismatch::expected: &'static str
+pub kernel_core::error::ConfigErrorKind::TypeMismatch::found: &'static str
+impl core::fmt::Debug for kernel_core::error::ConfigErrorKind
+pub fn kernel_core::error::ConfigErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ConfigErrorKind
+pub fn kernel_core::error::ConfigErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ConfigErrorKind
+impl core::marker::Send for kernel_core::error::ConfigErrorKind
+impl core::marker::Sync for kernel_core::error::ConfigErrorKind
+impl core::marker::Unpin for kernel_core::error::ConfigErrorKind
+impl core::marker::UnsafeUnpin for kernel_core::error::ConfigErrorKind
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ConfigErrorKind
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ConfigErrorKind
+pub enum kernel_core::error::ContainerError
+pub kernel_core::error::ContainerError::Build(kernel_core::error::BuildError)
+pub kernel_core::error::ContainerError::NoScope
+pub kernel_core::error::ContainerError::NoScope::contract: kernel_core::id::ContractRef
+pub kernel_core::error::ContainerError::NotProvided
+pub kernel_core::error::ContainerError::NotProvided::contract: kernel_core::id::ContractRef
+pub kernel_core::error::ContainerError::Sealed
+pub kernel_core::error::ContainerError::Sealed::contract: kernel_core::id::ContractRef
+pub kernel_core::error::ContainerError::TypeMismatch
+pub kernel_core::error::ContainerError::TypeMismatch::contract: kernel_core::id::ContractRef
+impl core::convert::From<kernel_core::error::BuildError> for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::from(kernel_core::error::BuildError) -> Self
+impl core::error::Error for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ContainerError
+impl core::marker::Send for kernel_core::error::ContainerError
+impl core::marker::Sync for kernel_core::error::ContainerError
+impl core::marker::Unpin for kernel_core::error::ContainerError
+impl core::marker::UnsafeUnpin for kernel_core::error::ContainerError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ContainerError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ContainerError
+pub enum kernel_core::error::KernelError
+pub kernel_core::error::KernelError::Boot
+pub kernel_core::error::KernelError::Boot::component: kernel_core::id::ComponentId
+pub kernel_core::error::KernelError::Boot::rolled_back: alloc::vec::Vec<kernel_core::id::ComponentId>
+pub kernel_core::error::KernelError::Boot::source: kernel_core::error::ComponentError
+pub kernel_core::error::KernelError::Config(alloc::vec::Vec<kernel_core::error::ConfigError>)
+pub kernel_core::error::KernelError::Register(alloc::vec::Vec<kernel_core::error::RegisterError>)
+pub kernel_core::error::KernelError::Resolve(alloc::vec::Vec<kernel_core::error::ResolveError>)
+pub kernel_core::error::KernelError::Run(alloc::vec::Vec<kernel_core::error::RunError>)
+pub kernel_core::error::KernelError::Shutdown(alloc::vec::Vec<kernel_core::error::ShutdownError>)
+impl core::error::Error for kernel_core::error::KernelError
+pub fn kernel_core::error::KernelError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::KernelError
+pub fn kernel_core::error::KernelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::KernelError
+pub fn kernel_core::error::KernelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::KernelError
+impl core::marker::Send for kernel_core::error::KernelError
+impl core::marker::Sync for kernel_core::error::KernelError
+impl core::marker::Unpin for kernel_core::error::KernelError
+impl core::marker::UnsafeUnpin for kernel_core::error::KernelError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::KernelError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::KernelError
+pub enum kernel_core::error::Outcome
+pub kernel_core::error::Outcome::Completed
+pub kernel_core::error::Outcome::Failed(kernel_core::error::KernelError)
+pub kernel_core::error::Outcome::ShutdownRequested
+impl kernel_core::error::Outcome
+pub fn kernel_core::error::Outcome::error(&self) -> core::option::Option<&kernel_core::error::KernelError>
+pub fn kernel_core::error::Outcome::into_exit_code(self) -> std::process::ExitCode
+pub fn kernel_core::error::Outcome::is_success(&self) -> bool
+impl core::fmt::Debug for kernel_core::error::Outcome
+pub fn kernel_core::error::Outcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::Outcome
+impl core::marker::Send for kernel_core::error::Outcome
+impl core::marker::Sync for kernel_core::error::Outcome
+impl core::marker::Unpin for kernel_core::error::Outcome
+impl core::marker::UnsafeUnpin for kernel_core::error::Outcome
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::Outcome
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::Outcome
+pub enum kernel_core::error::ResolveError
+pub kernel_core::error::ResolveError::BundleCycle
+pub kernel_core::error::ResolveError::BundleCycle::path: alloc::vec::Vec<&'static str>
+pub kernel_core::error::ResolveError::BundleOutOfOrder
+pub kernel_core::error::ResolveError::BundleOutOfOrder::after: &'static str
+pub kernel_core::error::ResolveError::BundleOutOfOrder::bundle: &'static str
+pub kernel_core::error::ResolveError::Cycle
+pub kernel_core::error::ResolveError::Cycle::path: alloc::vec::Vec<kernel_core::id::ContractRef>
+pub kernel_core::error::ResolveError::DuplicateBundle
+pub kernel_core::error::ResolveError::DuplicateBundle::name: &'static str
+pub kernel_core::error::ResolveError::DuplicateDefault
+pub kernel_core::error::ResolveError::DuplicateDefault::contract: kernel_core::id::ContractRef
+pub kernel_core::error::ResolveError::DuplicateDefault::first: &'static str
+pub kernel_core::error::ResolveError::DuplicateDefault::second: &'static str
+pub kernel_core::error::ResolveError::DuplicateNamed
+pub kernel_core::error::ResolveError::DuplicateNamed::contract: kernel_core::id::ContractRef
+pub kernel_core::error::ResolveError::DuplicateNamed::first: &'static str
+pub kernel_core::error::ResolveError::DuplicateNamed::name: &'static str
+pub kernel_core::error::ResolveError::DuplicateNamed::second: &'static str
+pub kernel_core::error::ResolveError::LifetimeConflict
+pub kernel_core::error::ResolveError::LifetimeConflict::bundle: &'static str
+pub kernel_core::error::ResolveError::LifetimeConflict::required_by: &'static str
+pub kernel_core::error::ResolveError::LifetimeConflict::requires: kernel_core::id::ContractRef
+pub kernel_core::error::ResolveError::ManifestMismatch
+pub kernel_core::error::ResolveError::ManifestMismatch::bundle: &'static str
+pub kernel_core::error::ResolveError::ManifestMismatch::declared: kernel_core::id::ContractRef
+pub kernel_core::error::ResolveError::MissingContract
+pub kernel_core::error::ResolveError::MissingContract::contract: kernel_core::id::ContractRef
+pub kernel_core::error::ResolveError::MissingContract::required_by: &'static str
+pub kernel_core::error::ResolveError::ScopeMismatch
+pub kernel_core::error::ResolveError::ScopeMismatch::bundle: &'static str
+pub kernel_core::error::ResolveError::ScopeMismatch::lifetime: kernel_core::descriptor::Lifetime
+pub kernel_core::error::ResolveError::ScopeMismatch::required_by: &'static str
+pub kernel_core::error::ResolveError::ScopeMismatch::requires: kernel_core::id::ContractRef
+pub kernel_core::error::ResolveError::UndeclaredExtensionPoint
+pub kernel_core::error::ResolveError::UndeclaredExtensionPoint::contributed_by: &'static str
+pub kernel_core::error::ResolveError::UndeclaredExtensionPoint::extension: kernel_core::id::ExtensionId
+pub kernel_core::error::ResolveError::UnknownBundleOrder
+pub kernel_core::error::ResolveError::UnknownBundleOrder::after: &'static str
+pub kernel_core::error::ResolveError::UnknownBundleOrder::bundle: &'static str
+impl core::error::Error for kernel_core::error::ResolveError
+impl core::fmt::Debug for kernel_core::error::ResolveError
+pub fn kernel_core::error::ResolveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ResolveError
+pub fn kernel_core::error::ResolveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ResolveError
+impl core::marker::Send for kernel_core::error::ResolveError
+impl core::marker::Sync for kernel_core::error::ResolveError
+impl core::marker::Unpin for kernel_core::error::ResolveError
+impl core::marker::UnsafeUnpin for kernel_core::error::ResolveError
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ResolveError
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::error::ResolveError
+pub enum kernel_core::error::RunErrorKind
+pub kernel_core::error::RunErrorKind::Cancelled
+pub kernel_core::error::RunErrorKind::DeadlineExceeded
+pub kernel_core::error::RunErrorKind::Failed(kernel_core::error::BoxSource)
+pub kernel_core::error::RunErrorKind::Panicked(alloc::string::String)
+impl core::convert::From<kernel_core::error::Aborted> for kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunErrorKind::from(kernel_core::error::Aborted) -> Self
+impl core::fmt::Debug for kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::RunErrorKind
+impl core::marker::Send for kernel_core::error::RunErrorKind
+impl core::marker::Sync for kernel_core::error::RunErrorKind
+impl core::marker::Unpin for kernel_core::error::RunErrorKind
+impl core::marker::UnsafeUnpin for kernel_core::error::RunErrorKind
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::RunErrorKind
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::RunErrorKind
+pub enum kernel_core::error::ShutdownErrorKind
+pub kernel_core::error::ShutdownErrorKind::DeadlineExceeded
+pub kernel_core::error::ShutdownErrorKind::Failed(kernel_core::error::BoxSource)
+impl core::fmt::Debug for kernel_core::error::ShutdownErrorKind
+pub fn kernel_core::error::ShutdownErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ShutdownErrorKind
+pub fn kernel_core::error::ShutdownErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ShutdownErrorKind
+impl core::marker::Send for kernel_core::error::ShutdownErrorKind
+impl core::marker::Sync for kernel_core::error::ShutdownErrorKind
+impl core::marker::Unpin for kernel_core::error::ShutdownErrorKind
+impl core::marker::UnsafeUnpin for kernel_core::error::ShutdownErrorKind
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ShutdownErrorKind
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ShutdownErrorKind
+pub struct kernel_core::error::Aborted
+impl kernel_core::error::Aborted
+pub const fn kernel_core::error::Aborted::deadline_exceeded() -> Self
+pub fn kernel_core::error::Aborted::find(&(dyn core::error::Error + 'static)) -> core::option::Option<Self>
+pub const fn kernel_core::error::Aborted::new(kernel_core::error::AbortReason) -> Self
+pub const fn kernel_core::error::Aborted::reason(self) -> kernel_core::error::AbortReason
+pub const fn kernel_core::error::Aborted::shutdown_requested() -> Self
+impl core::clone::Clone for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::clone(&self) -> kernel_core::error::Aborted
+impl core::clone::TrivialClone for kernel_core::error::Aborted
+impl core::cmp::Eq for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::eq(&self, &kernel_core::error::Aborted) -> bool
+impl core::convert::From<kernel_core::error::AbortReason> for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::from(kernel_core::error::AbortReason) -> Self
+impl core::convert::From<kernel_core::error::Aborted> for kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunErrorKind::from(kernel_core::error::Aborted) -> Self
+impl core::error::Error for kernel_core::error::Aborted
+impl core::fmt::Debug for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::error::Aborted
+impl core::marker::StructuralPartialEq for kernel_core::error::Aborted
+impl core::marker::Freeze for kernel_core::error::Aborted
+impl core::marker::Send for kernel_core::error::Aborted
+impl core::marker::Sync for kernel_core::error::Aborted
+impl core::marker::Unpin for kernel_core::error::Aborted
+impl core::marker::UnsafeUnpin for kernel_core::error::Aborted
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::Aborted
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::error::Aborted
+pub struct kernel_core::error::BuildError
+impl kernel_core::error::BuildError
+pub fn kernel_core::error::BuildError::cause(&self) -> &kernel_core::error::BoxSource
+pub fn kernel_core::error::BuildError::contract(&self) -> &'static str
+pub fn kernel_core::error::BuildError::new(&'static str, kernel_core::error::BoxSource) -> Self
+impl core::convert::From<kernel_core::error::BuildError> for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::from(kernel_core::error::BuildError) -> Self
+impl core::error::Error for kernel_core::error::BuildError
+pub fn kernel_core::error::BuildError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::BuildError
+pub fn kernel_core::error::BuildError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::BuildError
+pub fn kernel_core::error::BuildError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::BuildError
+impl core::marker::Send for kernel_core::error::BuildError
+impl core::marker::Sync for kernel_core::error::BuildError
+impl core::marker::Unpin for kernel_core::error::BuildError
+impl core::marker::UnsafeUnpin for kernel_core::error::BuildError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::BuildError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::BuildError
+pub struct kernel_core::error::ComponentError
+impl kernel_core::error::ComponentError
+pub fn kernel_core::error::ComponentError::cause(&self) -> &kernel_core::error::BoxSource
+pub fn kernel_core::error::ComponentError::component(&self) -> kernel_core::id::ComponentId
+pub fn kernel_core::error::ComponentError::new(kernel_core::id::ComponentId, kernel_core::error::BoxSource) -> Self
+impl core::error::Error for kernel_core::error::ComponentError
+pub fn kernel_core::error::ComponentError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ComponentError
+pub fn kernel_core::error::ComponentError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ComponentError
+pub fn kernel_core::error::ComponentError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ComponentError
+impl core::marker::Send for kernel_core::error::ComponentError
+impl core::marker::Sync for kernel_core::error::ComponentError
+impl core::marker::Unpin for kernel_core::error::ComponentError
+impl core::marker::UnsafeUnpin for kernel_core::error::ComponentError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ComponentError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ComponentError
+pub struct kernel_core::error::ConfigError
+impl kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::invalid(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::error::ConfigError::kind(&self) -> &kernel_core::error::ConfigErrorKind
+pub fn kernel_core::error::ConfigError::missing(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::error::ConfigError::path(&self) -> &str
+pub fn kernel_core::error::ConfigError::source_error(impl core::convert::Into<alloc::string::String>, kernel_core::error::BoxSource) -> Self
+pub fn kernel_core::error::ConfigError::type_mismatch(impl core::convert::Into<alloc::string::String>, &'static str, &'static str) -> Self
+impl kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::under(self, &str) -> kernel_core::error::ConfigError
+impl core::error::Error for kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ConfigError
+impl core::marker::Send for kernel_core::error::ConfigError
+impl core::marker::Sync for kernel_core::error::ConfigError
+impl core::marker::Unpin for kernel_core::error::ConfigError
+impl core::marker::UnsafeUnpin for kernel_core::error::ConfigError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ConfigError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ConfigError
+pub struct kernel_core::error::DispatchError
+impl kernel_core::error::DispatchError
+pub fn kernel_core::error::DispatchError::cause(&self) -> &kernel_core::error::ListenerError
+pub fn kernel_core::error::DispatchError::event(&self) -> &'static str
+pub fn kernel_core::error::DispatchError::new(&'static str, kernel_core::error::ListenerError) -> Self
+impl core::error::Error for kernel_core::error::DispatchError
+pub fn kernel_core::error::DispatchError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::DispatchError
+pub fn kernel_core::error::DispatchError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::DispatchError
+pub fn kernel_core::error::DispatchError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::DispatchError
+impl core::marker::Send for kernel_core::error::DispatchError
+impl core::marker::Sync for kernel_core::error::DispatchError
+impl core::marker::Unpin for kernel_core::error::DispatchError
+impl core::marker::UnsafeUnpin for kernel_core::error::DispatchError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::DispatchError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::DispatchError
+pub struct kernel_core::error::ListenerError
+impl kernel_core::error::ListenerError
+pub fn kernel_core::error::ListenerError::cause(&self) -> &kernel_core::error::BoxSource
+pub fn kernel_core::error::ListenerError::event(&self) -> &'static str
+pub fn kernel_core::error::ListenerError::new(&'static str, kernel_core::error::BoxSource) -> Self
+impl core::error::Error for kernel_core::error::ListenerError
+pub fn kernel_core::error::ListenerError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ListenerError
+pub fn kernel_core::error::ListenerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ListenerError
+pub fn kernel_core::error::ListenerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ListenerError
+impl core::marker::Send for kernel_core::error::ListenerError
+impl core::marker::Sync for kernel_core::error::ListenerError
+impl core::marker::Unpin for kernel_core::error::ListenerError
+impl core::marker::UnsafeUnpin for kernel_core::error::ListenerError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ListenerError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ListenerError
+pub struct kernel_core::error::RegisterError
+impl kernel_core::error::RegisterError
+pub fn kernel_core::error::RegisterError::bundle(&self) -> &'static str
+pub fn kernel_core::error::RegisterError::cause(&self) -> &kernel_core::error::BoxSource
+pub fn kernel_core::error::RegisterError::new(&'static str, kernel_core::error::BoxSource) -> Self
+impl core::error::Error for kernel_core::error::RegisterError
+pub fn kernel_core::error::RegisterError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::RegisterError
+pub fn kernel_core::error::RegisterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::RegisterError
+pub fn kernel_core::error::RegisterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::RegisterError
+impl core::marker::Send for kernel_core::error::RegisterError
+impl core::marker::Sync for kernel_core::error::RegisterError
+impl core::marker::Unpin for kernel_core::error::RegisterError
+impl core::marker::UnsafeUnpin for kernel_core::error::RegisterError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::RegisterError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::RegisterError
+pub struct kernel_core::error::RunError
+impl kernel_core::error::RunError
+pub fn kernel_core::error::RunError::abort_reason(&self) -> core::option::Option<kernel_core::error::AbortReason>
+pub fn kernel_core::error::RunError::cancelled(kernel_core::id::RunnableId) -> Self
+pub fn kernel_core::error::RunError::deadline_exceeded(kernel_core::id::RunnableId) -> Self
+pub fn kernel_core::error::RunError::failed(kernel_core::id::RunnableId, kernel_core::error::BoxSource) -> Self
+pub fn kernel_core::error::RunError::kind(&self) -> &kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunError::new(kernel_core::id::RunnableId, kernel_core::error::RunErrorKind) -> Self
+pub fn kernel_core::error::RunError::panicked(kernel_core::id::RunnableId, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::error::RunError::runnable(&self) -> kernel_core::id::RunnableId
+impl core::error::Error for kernel_core::error::RunError
+pub fn kernel_core::error::RunError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::RunError
+pub fn kernel_core::error::RunError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::RunError
+pub fn kernel_core::error::RunError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::RunError
+impl core::marker::Send for kernel_core::error::RunError
+impl core::marker::Sync for kernel_core::error::RunError
+impl core::marker::Unpin for kernel_core::error::RunError
+impl core::marker::UnsafeUnpin for kernel_core::error::RunError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::RunError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::RunError
+pub struct kernel_core::error::ShutdownError
+impl kernel_core::error::ShutdownError
+pub fn kernel_core::error::ShutdownError::abort_reason(&self) -> core::option::Option<kernel_core::error::AbortReason>
+pub fn kernel_core::error::ShutdownError::deadline_exceeded(&'static str) -> Self
+pub fn kernel_core::error::ShutdownError::failed(&'static str, kernel_core::error::BoxSource) -> Self
+pub fn kernel_core::error::ShutdownError::kind(&self) -> &kernel_core::error::ShutdownErrorKind
+pub fn kernel_core::error::ShutdownError::new(&'static str, kernel_core::error::ShutdownErrorKind) -> Self
+pub fn kernel_core::error::ShutdownError::unit(&self) -> &'static str
+impl core::error::Error for kernel_core::error::ShutdownError
+pub fn kernel_core::error::ShutdownError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ShutdownError
+pub fn kernel_core::error::ShutdownError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ShutdownError
+pub fn kernel_core::error::ShutdownError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ShutdownError
+impl core::marker::Send for kernel_core::error::ShutdownError
+impl core::marker::Sync for kernel_core::error::ShutdownError
+impl core::marker::Unpin for kernel_core::error::ShutdownError
+impl core::marker::UnsafeUnpin for kernel_core::error::ShutdownError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ShutdownError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ShutdownError
+pub type kernel_core::error::BoxSource = alloc::boxed::Box<(dyn core::error::Error + core::marker::Send + core::marker::Sync + 'static)>
+pub mod kernel_core::event
+pub enum kernel_core::event::Flow
+pub kernel_core::event::Flow::Continue
+pub kernel_core::event::Flow::Stop
+impl kernel_core::event::Flow
+pub fn kernel_core::event::Flow::is_continue(self) -> bool
+pub fn kernel_core::event::Flow::is_stop(self) -> bool
+impl core::clone::Clone for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::clone(&self) -> kernel_core::event::Flow
+impl core::clone::TrivialClone for kernel_core::event::Flow
+impl core::cmp::Eq for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::eq(&self, &kernel_core::event::Flow) -> bool
+impl core::default::Default for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::default() -> kernel_core::event::Flow
+impl core::fmt::Debug for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::event::Flow
+impl core::marker::StructuralPartialEq for kernel_core::event::Flow
+impl core::marker::Freeze for kernel_core::event::Flow
+impl core::marker::Send for kernel_core::event::Flow
+impl core::marker::Sync for kernel_core::event::Flow
+impl core::marker::Unpin for kernel_core::event::Flow
+impl core::marker::UnsafeUnpin for kernel_core::event::Flow
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::event::Flow
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::event::Flow
+pub trait kernel_core::event::Event: core::marker::Send + core::marker::Sync + 'static
+pub const kernel_core::event::Event::NAME: &'static str
+pub mod kernel_core::extension
+pub trait kernel_core::extension::Extension: core::marker::Send + core::marker::Sync + 'static
+pub mod kernel_core::future
+pub struct kernel_core::future::YieldNow
+impl core::fmt::Debug for kernel_core::future::YieldNow
+pub fn kernel_core::future::YieldNow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::future::future::Future for kernel_core::future::YieldNow
+pub type kernel_core::future::YieldNow::Output = ()
+pub fn kernel_core::future::YieldNow::poll(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>) -> core::task::poll::Poll<()>
+impl core::marker::Freeze for kernel_core::future::YieldNow
+impl core::marker::Send for kernel_core::future::YieldNow
+impl core::marker::Sync for kernel_core::future::YieldNow
+impl core::marker::Unpin for kernel_core::future::YieldNow
+impl core::marker::UnsafeUnpin for kernel_core::future::YieldNow
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::future::YieldNow
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::future::YieldNow
+pub fn kernel_core::future::yield_now() -> kernel_core::future::YieldNow
+pub type kernel_core::future::BoxFuture<'a, T> = core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = T> + core::marker::Send + 'a)>>
+pub mod kernel_core::health
+pub enum kernel_core::health::Health
+pub kernel_core::health::Health::Degraded
+pub kernel_core::health::Health::Degraded::detail: alloc::string::String
+pub kernel_core::health::Health::Down
+pub kernel_core::health::Health::Down::detail: alloc::string::String
+pub kernel_core::health::Health::Up
+impl kernel_core::health::Health
+pub fn kernel_core::health::Health::degraded(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::health::Health::detail(&self) -> core::option::Option<&str>
+pub fn kernel_core::health::Health::down(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::health::Health::is_up(&self) -> bool
+pub fn kernel_core::health::Health::worst(kernel_core::health::Health, kernel_core::health::Health) -> kernel_core::health::Health
+pub fn kernel_core::health::Health::worst_of<I: core::iter::traits::collect::IntoIterator<Item = kernel_core::health::Health>>(I) -> kernel_core::health::Health
+impl core::clone::Clone for kernel_core::health::Health
+pub fn kernel_core::health::Health::clone(&self) -> kernel_core::health::Health
+impl core::cmp::Eq for kernel_core::health::Health
+pub fn kernel_core::health::Health::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::health::Health
+pub fn kernel_core::health::Health::eq(&self, &kernel_core::health::Health) -> bool
+impl core::default::Default for kernel_core::health::Health
+pub fn kernel_core::health::Health::default() -> Self
+impl core::fmt::Debug for kernel_core::health::Health
+pub fn kernel_core::health::Health::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::health::Health
+pub fn kernel_core::health::Health::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::health::Health
+pub fn kernel_core::health::Health::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for kernel_core::health::Health
+impl core::marker::Freeze for kernel_core::health::Health
+impl core::marker::Send for kernel_core::health::Health
+impl core::marker::Sync for kernel_core::health::Health
+impl core::marker::Unpin for kernel_core::health::Health
+impl core::marker::UnsafeUnpin for kernel_core::health::Health
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::health::Health
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::health::Health
+pub trait kernel_core::health::HealthProbe: kernel_core::extension::Extension
+pub fn kernel_core::health::HealthProbe::check<'a>(&'a self) -> kernel_core::future::BoxFuture<'a, kernel_core::health::Health>
+pub fn kernel_core::health::HealthProbe::name(&self) -> &'static str
+pub mod kernel_core::id
+pub struct kernel_core::id::ComponentId
+impl kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::index(&self) -> u32
+pub fn kernel_core::id::ComponentId::name(&self) -> &'static str
+pub const fn kernel_core::id::ComponentId::new(&'static str, u32) -> Self
+impl core::clone::Clone for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::clone(&self) -> kernel_core::id::ComponentId
+impl core::clone::TrivialClone for kernel_core::id::ComponentId
+impl core::cmp::Eq for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::eq(&self, &kernel_core::id::ComponentId) -> bool
+impl core::fmt::Debug for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::id::ComponentId
+impl core::marker::StructuralPartialEq for kernel_core::id::ComponentId
+impl core::marker::Freeze for kernel_core::id::ComponentId
+impl core::marker::Send for kernel_core::id::ComponentId
+impl core::marker::Sync for kernel_core::id::ComponentId
+impl core::marker::Unpin for kernel_core::id::ComponentId
+impl core::marker::UnsafeUnpin for kernel_core::id::ComponentId
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::ComponentId
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::ComponentId
+pub struct kernel_core::id::ContractId
+pub kernel_core::id::ContractId::name: core::option::Option<&'static str>
+pub kernel_core::id::ContractId::type_id: core::any::TypeId
+impl kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::named<C: ?core::marker::Sized + 'static>(&'static str) -> Self
+pub fn kernel_core::id::ContractId::of<C: ?core::marker::Sized + 'static>() -> Self
+impl core::clone::Clone for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::clone(&self) -> kernel_core::id::ContractId
+impl core::clone::TrivialClone for kernel_core::id::ContractId
+impl core::cmp::Eq for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::eq(&self, &kernel_core::id::ContractId) -> bool
+impl core::convert::From<kernel_core::id::ContractRef> for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::from(kernel_core::id::ContractRef) -> Self
+impl core::fmt::Debug for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::id::ContractId
+impl core::marker::StructuralPartialEq for kernel_core::id::ContractId
+impl core::marker::Freeze for kernel_core::id::ContractId
+impl core::marker::Send for kernel_core::id::ContractId
+impl core::marker::Sync for kernel_core::id::ContractId
+impl core::marker::Unpin for kernel_core::id::ContractId
+impl core::marker::UnsafeUnpin for kernel_core::id::ContractId
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::ContractId
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::ContractId
+pub struct kernel_core::id::ContractRef
+impl kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::id(&self) -> kernel_core::id::ContractId
+pub fn kernel_core::id::ContractRef::name(&self) -> core::option::Option<&'static str>
+pub const fn kernel_core::id::ContractRef::named<C: ?core::marker::Sized + 'static>(&'static str) -> Self
+pub const fn kernel_core::id::ContractRef::of<C: ?core::marker::Sized + 'static>() -> Self
+pub fn kernel_core::id::ContractRef::type_name(&self) -> &'static str
+impl core::clone::Clone for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::clone(&self) -> kernel_core::id::ContractRef
+impl core::clone::TrivialClone for kernel_core::id::ContractRef
+impl core::cmp::Eq for kernel_core::id::ContractRef
+impl core::cmp::PartialEq for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::eq(&self, &Self) -> bool
+impl core::convert::From<kernel_core::id::ContractRef> for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::from(kernel_core::id::ContractRef) -> Self
+impl core::fmt::Debug for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::Copy for kernel_core::id::ContractRef
+impl core::marker::Freeze for kernel_core::id::ContractRef
+impl core::marker::Send for kernel_core::id::ContractRef
+impl core::marker::Sync for kernel_core::id::ContractRef
+impl core::marker::Unpin for kernel_core::id::ContractRef
+impl core::marker::UnsafeUnpin for kernel_core::id::ContractRef
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::ContractRef
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::ContractRef
+pub struct kernel_core::id::ExtensionId
+pub kernel_core::id::ExtensionId::type_id: core::any::TypeId
+pub kernel_core::id::ExtensionId::type_name: &'static str
+impl kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::of<X: 'static>() -> Self
+impl core::clone::Clone for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::clone(&self) -> kernel_core::id::ExtensionId
+impl core::clone::TrivialClone for kernel_core::id::ExtensionId
+impl core::cmp::Eq for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::eq(&self, &kernel_core::id::ExtensionId) -> bool
+impl core::fmt::Debug for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::id::ExtensionId
+impl core::marker::StructuralPartialEq for kernel_core::id::ExtensionId
+impl core::marker::Freeze for kernel_core::id::ExtensionId
+impl core::marker::Send for kernel_core::id::ExtensionId
+impl core::marker::Sync for kernel_core::id::ExtensionId
+impl core::marker::Unpin for kernel_core::id::ExtensionId
+impl core::marker::UnsafeUnpin for kernel_core::id::ExtensionId
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::ExtensionId
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::ExtensionId
+pub struct kernel_core::id::RunnableId
+impl kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::index(&self) -> u32
+pub fn kernel_core::id::RunnableId::name(&self) -> &'static str
+pub const fn kernel_core::id::RunnableId::new(&'static str, u32) -> Self
+impl core::clone::Clone for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::clone(&self) -> kernel_core::id::RunnableId
+impl core::clone::TrivialClone for kernel_core::id::RunnableId
+impl core::cmp::Eq for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::eq(&self, &kernel_core::id::RunnableId) -> bool
+impl core::fmt::Debug for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::id::RunnableId
+impl core::marker::StructuralPartialEq for kernel_core::id::RunnableId
+impl core::marker::Freeze for kernel_core::id::RunnableId
+impl core::marker::Send for kernel_core::id::RunnableId
+impl core::marker::Sync for kernel_core::id::RunnableId
+impl core::marker::Unpin for kernel_core::id::RunnableId
+impl core::marker::UnsafeUnpin for kernel_core::id::RunnableId
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::RunnableId
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::RunnableId
+pub mod kernel_core::telemetry
+pub enum kernel_core::telemetry::FieldValue
+pub kernel_core::telemetry::FieldValue::Bool(bool)
+pub kernel_core::telemetry::FieldValue::Duration(core::time::Duration)
+pub kernel_core::telemetry::FieldValue::Int(i64)
+pub kernel_core::telemetry::FieldValue::Str(alloc::string::String)
+impl kernel_core::telemetry::FieldValue
+pub const fn kernel_core::telemetry::FieldValue::as_bool(&self) -> core::option::Option<bool>
+pub const fn kernel_core::telemetry::FieldValue::as_duration(&self) -> core::option::Option<core::time::Duration>
+pub const fn kernel_core::telemetry::FieldValue::as_int(&self) -> core::option::Option<i64>
+pub fn kernel_core::telemetry::FieldValue::as_str(&self) -> core::option::Option<&str>
+pub const fn kernel_core::telemetry::FieldValue::kind_name(&self) -> &'static str
+impl core::clone::Clone for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::clone(&self) -> kernel_core::telemetry::FieldValue
+impl core::cmp::Eq for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::eq(&self, &kernel_core::telemetry::FieldValue) -> bool
+impl core::convert::From<&str> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(alloc::string::String) -> Self
+impl core::convert::From<bool> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(bool) -> Self
+impl core::convert::From<core::time::Duration> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(core::time::Duration) -> Self
+impl core::convert::From<i128> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i128) -> Self
+impl core::convert::From<i16> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i16) -> Self
+impl core::convert::From<i32> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i32) -> Self
+impl core::convert::From<i64> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i64) -> Self
+impl core::convert::From<i8> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i8) -> Self
+impl core::convert::From<isize> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(isize) -> Self
+impl core::convert::From<u128> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u128) -> Self
+impl core::convert::From<u16> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u16) -> Self
+impl core::convert::From<u32> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u32) -> Self
+impl core::convert::From<u64> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u64) -> Self
+impl core::convert::From<u8> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u8) -> Self
+impl core::convert::From<usize> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(usize) -> Self
+impl core::fmt::Debug for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::FieldValue
+impl core::marker::Freeze for kernel_core::telemetry::FieldValue
+impl core::marker::Send for kernel_core::telemetry::FieldValue
+impl core::marker::Sync for kernel_core::telemetry::FieldValue
+impl core::marker::Unpin for kernel_core::telemetry::FieldValue
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::FieldValue
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::FieldValue
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::FieldValue
+pub enum kernel_core::telemetry::Level
+pub kernel_core::telemetry::Level::Debug
+pub kernel_core::telemetry::Level::Error
+pub kernel_core::telemetry::Level::Info
+pub kernel_core::telemetry::Level::Warn
+impl kernel_core::telemetry::Level
+pub const fn kernel_core::telemetry::Level::as_str(self) -> &'static str
+impl core::clone::Clone for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::clone(&self) -> kernel_core::telemetry::Level
+impl core::clone::TrivialClone for kernel_core::telemetry::Level
+impl core::cmp::Eq for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::assert_fields_are_eq(&self)
+impl core::cmp::Ord for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::cmp(&self, &kernel_core::telemetry::Level) -> core::cmp::Ordering
+impl core::cmp::PartialEq for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::eq(&self, &kernel_core::telemetry::Level) -> bool
+impl core::cmp::PartialOrd for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::partial_cmp(&self, &kernel_core::telemetry::Level) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::telemetry::Level
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::Level
+impl core::marker::Freeze for kernel_core::telemetry::Level
+impl core::marker::Send for kernel_core::telemetry::Level
+impl core::marker::Sync for kernel_core::telemetry::Level
+impl core::marker::Unpin for kernel_core::telemetry::Level
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::Level
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::Level
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::Level
+pub struct kernel_core::telemetry::Field
+pub kernel_core::telemetry::Field::key: &'static str
+pub kernel_core::telemetry::Field::value: kernel_core::telemetry::FieldValue
+impl kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::new(&'static str, impl core::convert::Into<kernel_core::telemetry::FieldValue>) -> Self
+impl core::clone::Clone for kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::clone(&self) -> kernel_core::telemetry::Field
+impl core::cmp::Eq for kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::eq(&self, &kernel_core::telemetry::Field) -> bool
+impl core::fmt::Debug for kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::Field
+impl core::marker::Freeze for kernel_core::telemetry::Field
+impl core::marker::Send for kernel_core::telemetry::Field
+impl core::marker::Sync for kernel_core::telemetry::Field
+impl core::marker::Unpin for kernel_core::telemetry::Field
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::Field
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::Field
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::Field
+pub struct kernel_core::telemetry::NoopTelemetry
+impl core::clone::Clone for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::clone(&self) -> kernel_core::telemetry::NoopTelemetry
+impl core::clone::TrivialClone for kernel_core::telemetry::NoopTelemetry
+impl core::cmp::Eq for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::eq(&self, &kernel_core::telemetry::NoopTelemetry) -> bool
+impl core::default::Default for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::default() -> kernel_core::telemetry::NoopTelemetry
+impl core::fmt::Debug for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::telemetry::NoopTelemetry
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::NoopTelemetry
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::record(&self, kernel_core::telemetry::Record)
+impl core::marker::Freeze for kernel_core::telemetry::NoopTelemetry
+impl core::marker::Send for kernel_core::telemetry::NoopTelemetry
+impl core::marker::Sync for kernel_core::telemetry::NoopTelemetry
+impl core::marker::Unpin for kernel_core::telemetry::NoopTelemetry
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::NoopTelemetry
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::NoopTelemetry
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::NoopTelemetry
+pub struct kernel_core::telemetry::Record
+pub kernel_core::telemetry::Record::event: &'static str
+pub kernel_core::telemetry::Record::fields: alloc::vec::Vec<kernel_core::telemetry::Field>
+pub kernel_core::telemetry::Record::level: kernel_core::telemetry::Level
+impl kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::bool(&self, &str) -> core::option::Option<bool>
+pub fn kernel_core::telemetry::Record::duration(&self, &str) -> core::option::Option<core::time::Duration>
+pub fn kernel_core::telemetry::Record::field(&self, &str) -> core::option::Option<&kernel_core::telemetry::FieldValue>
+pub fn kernel_core::telemetry::Record::int(&self, &str) -> core::option::Option<i64>
+pub const fn kernel_core::telemetry::Record::new(kernel_core::telemetry::Level, &'static str) -> Self
+pub fn kernel_core::telemetry::Record::str(&self, &str) -> core::option::Option<&str>
+pub fn kernel_core::telemetry::Record::with(self, &'static str, impl core::convert::Into<kernel_core::telemetry::FieldValue>) -> Self
+impl core::clone::Clone for kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::clone(&self) -> kernel_core::telemetry::Record
+impl core::cmp::Eq for kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::eq(&self, &kernel_core::telemetry::Record) -> bool
+impl core::fmt::Debug for kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::Record
+impl core::marker::Freeze for kernel_core::telemetry::Record
+impl core::marker::Send for kernel_core::telemetry::Record
+impl core::marker::Sync for kernel_core::telemetry::Record
+impl core::marker::Unpin for kernel_core::telemetry::Record
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::Record
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::Record
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::Record
+pub struct kernel_core::telemetry::RecordingTelemetry
+impl kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::clear(&self)
+pub fn kernel_core::telemetry::RecordingTelemetry::contains(&self, &str) -> bool
+pub fn kernel_core::telemetry::RecordingTelemetry::is_empty(&self) -> bool
+pub fn kernel_core::telemetry::RecordingTelemetry::len(&self) -> usize
+pub fn kernel_core::telemetry::RecordingTelemetry::new() -> Self
+pub fn kernel_core::telemetry::RecordingTelemetry::records(&self) -> alloc::vec::Vec<kernel_core::telemetry::Record>
+impl core::clone::Clone for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::clone(&self) -> kernel_core::telemetry::RecordingTelemetry
+impl core::default::Default for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::default() -> kernel_core::telemetry::RecordingTelemetry
+impl core::fmt::Debug for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::record(&self, kernel_core::telemetry::Record)
+impl core::marker::Freeze for kernel_core::telemetry::RecordingTelemetry
+impl core::marker::Send for kernel_core::telemetry::RecordingTelemetry
+impl core::marker::Sync for kernel_core::telemetry::RecordingTelemetry
+impl core::marker::Unpin for kernel_core::telemetry::RecordingTelemetry
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::RecordingTelemetry
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::RecordingTelemetry
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::RecordingTelemetry
+pub struct kernel_core::telemetry::StderrTelemetry
+impl core::clone::Clone for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::clone(&self) -> kernel_core::telemetry::StderrTelemetry
+impl core::clone::TrivialClone for kernel_core::telemetry::StderrTelemetry
+impl core::cmp::Eq for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::eq(&self, &kernel_core::telemetry::StderrTelemetry) -> bool
+impl core::default::Default for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::default() -> kernel_core::telemetry::StderrTelemetry
+impl core::fmt::Debug for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::telemetry::StderrTelemetry
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::StderrTelemetry
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::record(&self, kernel_core::telemetry::Record)
+impl core::marker::Freeze for kernel_core::telemetry::StderrTelemetry
+impl core::marker::Send for kernel_core::telemetry::StderrTelemetry
+impl core::marker::Sync for kernel_core::telemetry::StderrTelemetry
+impl core::marker::Unpin for kernel_core::telemetry::StderrTelemetry
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::StderrTelemetry
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::StderrTelemetry
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::StderrTelemetry
+pub trait kernel_core::telemetry::Telemetry: core::marker::Send + core::marker::Sync + 'static
+pub fn kernel_core::telemetry::Telemetry::record(&self, kernel_core::telemetry::Record)
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::record(&self, kernel_core::telemetry::Record)
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::record(&self, kernel_core::telemetry::Record)
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::record(&self, kernel_core::telemetry::Record)
+impl<T: kernel_core::telemetry::Telemetry + ?core::marker::Sized> kernel_core::telemetry::Telemetry for alloc::sync::Arc<T>
+pub fn alloc::sync::Arc<T>::record(&self, kernel_core::telemetry::Record)
+pub enum kernel_core::AbortReason
+pub kernel_core::AbortReason::DeadlineExceeded
+pub kernel_core::AbortReason::ShutdownRequested
+impl kernel_core::error::AbortReason
+pub const fn kernel_core::error::AbortReason::as_str(self) -> &'static str
+impl core::clone::Clone for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::clone(&self) -> kernel_core::error::AbortReason
+impl core::clone::TrivialClone for kernel_core::error::AbortReason
+impl core::cmp::Eq for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::eq(&self, &kernel_core::error::AbortReason) -> bool
+impl core::convert::From<kernel_core::error::AbortReason> for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::from(kernel_core::error::AbortReason) -> Self
+impl core::fmt::Debug for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::error::AbortReason
+pub fn kernel_core::error::AbortReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::error::AbortReason
+impl core::marker::StructuralPartialEq for kernel_core::error::AbortReason
+impl core::marker::Freeze for kernel_core::error::AbortReason
+impl core::marker::Send for kernel_core::error::AbortReason
+impl core::marker::Sync for kernel_core::error::AbortReason
+impl core::marker::Unpin for kernel_core::error::AbortReason
+impl core::marker::UnsafeUnpin for kernel_core::error::AbortReason
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::AbortReason
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::error::AbortReason
+pub enum kernel_core::Backoff
+pub kernel_core::Backoff::Exponential
+pub kernel_core::Backoff::Exponential::factor: f64
+pub kernel_core::Backoff::Exponential::initial: core::time::Duration
+pub kernel_core::Backoff::Exponential::max: core::time::Duration
+pub kernel_core::Backoff::Fixed(core::time::Duration)
+impl kernel_core::descriptor::Backoff
+pub const kernel_core::descriptor::Backoff::NONE: kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::delay(&self, u32) -> core::time::Duration
+pub fn kernel_core::descriptor::Backoff::with_jitter(core::time::Duration, u64) -> core::time::Duration
+impl core::clone::Clone for kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::clone(&self) -> kernel_core::descriptor::Backoff
+impl core::clone::TrivialClone for kernel_core::descriptor::Backoff
+impl core::cmp::PartialEq for kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::eq(&self, &kernel_core::descriptor::Backoff) -> bool
+impl core::default::Default for kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::default() -> Self
+impl core::fmt::Debug for kernel_core::descriptor::Backoff
+pub fn kernel_core::descriptor::Backoff::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::descriptor::Backoff
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Backoff
+impl core::marker::Freeze for kernel_core::descriptor::Backoff
+impl core::marker::Send for kernel_core::descriptor::Backoff
+impl core::marker::Sync for kernel_core::descriptor::Backoff
+impl core::marker::Unpin for kernel_core::descriptor::Backoff
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Backoff
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Backoff
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Backoff
+pub enum kernel_core::ConfigErrorKind
+pub kernel_core::ConfigErrorKind::Invalid(alloc::string::String)
+pub kernel_core::ConfigErrorKind::Missing
+pub kernel_core::ConfigErrorKind::Source(kernel_core::error::BoxSource)
+pub kernel_core::ConfigErrorKind::TypeMismatch
+pub kernel_core::ConfigErrorKind::TypeMismatch::expected: &'static str
+pub kernel_core::ConfigErrorKind::TypeMismatch::found: &'static str
+impl core::fmt::Debug for kernel_core::error::ConfigErrorKind
+pub fn kernel_core::error::ConfigErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ConfigErrorKind
+pub fn kernel_core::error::ConfigErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ConfigErrorKind
+impl core::marker::Send for kernel_core::error::ConfigErrorKind
+impl core::marker::Sync for kernel_core::error::ConfigErrorKind
+impl core::marker::Unpin for kernel_core::error::ConfigErrorKind
+impl core::marker::UnsafeUnpin for kernel_core::error::ConfigErrorKind
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ConfigErrorKind
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ConfigErrorKind
+pub enum kernel_core::ConfigNode
+pub kernel_core::ConfigNode::Map(alloc::collections::btree::map::BTreeMap<alloc::string::String, kernel_core::config::ConfigNode>)
+pub kernel_core::ConfigNode::Scalar(kernel_core::config::Scalar)
+pub kernel_core::ConfigNode::Seq(alloc::vec::Vec<kernel_core::config::ConfigNode>)
+impl kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::as_bool(&self) -> core::result::Result<bool, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::as_f64(&self) -> core::result::Result<f64, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::as_i64(&self) -> core::result::Result<i64, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::as_str(&self) -> core::result::Result<&str, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::field<T: kernel_core::config::FromConfig>(&self, &str) -> core::result::Result<T, kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigNode::get(&self, &str) -> core::option::Option<&kernel_core::config::ConfigNode>
+pub fn kernel_core::config::ConfigNode::is_null(&self) -> bool
+pub fn kernel_core::config::ConfigNode::kind_name(&self) -> &'static str
+pub fn kernel_core::config::ConfigNode::map() -> Self
+pub fn kernel_core::config::ConfigNode::null() -> Self
+impl core::clone::Clone for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::clone(&self) -> kernel_core::config::ConfigNode
+impl core::cmp::PartialEq for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::eq(&self, &kernel_core::config::ConfigNode) -> bool
+impl core::convert::From<&str> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(alloc::string::String) -> Self
+impl core::convert::From<bool> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(bool) -> Self
+impl core::convert::From<f64> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(f64) -> Self
+impl core::convert::From<i64> for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from(i64) -> Self
+impl core::fmt::Debug for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::config::ConfigNode
+impl kernel_core::config::FromConfig for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl core::marker::Freeze for kernel_core::config::ConfigNode
+impl core::marker::Send for kernel_core::config::ConfigNode
+impl core::marker::Sync for kernel_core::config::ConfigNode
+impl core::marker::Unpin for kernel_core::config::ConfigNode
+impl core::marker::UnsafeUnpin for kernel_core::config::ConfigNode
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::config::ConfigNode
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::config::ConfigNode
+pub enum kernel_core::ContainerError
+pub kernel_core::ContainerError::Build(kernel_core::error::BuildError)
+pub kernel_core::ContainerError::NoScope
+pub kernel_core::ContainerError::NoScope::contract: kernel_core::id::ContractRef
+pub kernel_core::ContainerError::NotProvided
+pub kernel_core::ContainerError::NotProvided::contract: kernel_core::id::ContractRef
+pub kernel_core::ContainerError::Sealed
+pub kernel_core::ContainerError::Sealed::contract: kernel_core::id::ContractRef
+pub kernel_core::ContainerError::TypeMismatch
+pub kernel_core::ContainerError::TypeMismatch::contract: kernel_core::id::ContractRef
+impl core::convert::From<kernel_core::error::BuildError> for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::from(kernel_core::error::BuildError) -> Self
+impl core::error::Error for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ContainerError
+impl core::marker::Send for kernel_core::error::ContainerError
+impl core::marker::Sync for kernel_core::error::ContainerError
+impl core::marker::Unpin for kernel_core::error::ContainerError
+impl core::marker::UnsafeUnpin for kernel_core::error::ContainerError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ContainerError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ContainerError
+pub enum kernel_core::Criticality
+pub kernel_core::Criticality::Ancillary
+pub kernel_core::Criticality::Essential
+impl kernel_core::descriptor::Criticality
+pub const fn kernel_core::descriptor::Criticality::as_str(&self) -> &'static str
+impl core::clone::Clone for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::clone(&self) -> kernel_core::descriptor::Criticality
+impl core::clone::TrivialClone for kernel_core::descriptor::Criticality
+impl core::cmp::Eq for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::eq(&self, &kernel_core::descriptor::Criticality) -> bool
+impl core::default::Default for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::default() -> kernel_core::descriptor::Criticality
+impl core::fmt::Debug for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::Criticality
+pub fn kernel_core::descriptor::Criticality::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::Criticality
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Criticality
+impl core::marker::Freeze for kernel_core::descriptor::Criticality
+impl core::marker::Send for kernel_core::descriptor::Criticality
+impl core::marker::Sync for kernel_core::descriptor::Criticality
+impl core::marker::Unpin for kernel_core::descriptor::Criticality
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Criticality
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Criticality
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Criticality
+pub enum kernel_core::FieldValue
+pub kernel_core::FieldValue::Bool(bool)
+pub kernel_core::FieldValue::Duration(core::time::Duration)
+pub kernel_core::FieldValue::Int(i64)
+pub kernel_core::FieldValue::Str(alloc::string::String)
+impl kernel_core::telemetry::FieldValue
+pub const fn kernel_core::telemetry::FieldValue::as_bool(&self) -> core::option::Option<bool>
+pub const fn kernel_core::telemetry::FieldValue::as_duration(&self) -> core::option::Option<core::time::Duration>
+pub const fn kernel_core::telemetry::FieldValue::as_int(&self) -> core::option::Option<i64>
+pub fn kernel_core::telemetry::FieldValue::as_str(&self) -> core::option::Option<&str>
+pub const fn kernel_core::telemetry::FieldValue::kind_name(&self) -> &'static str
+impl core::clone::Clone for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::clone(&self) -> kernel_core::telemetry::FieldValue
+impl core::cmp::Eq for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::eq(&self, &kernel_core::telemetry::FieldValue) -> bool
+impl core::convert::From<&str> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(alloc::string::String) -> Self
+impl core::convert::From<bool> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(bool) -> Self
+impl core::convert::From<core::time::Duration> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(core::time::Duration) -> Self
+impl core::convert::From<i128> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i128) -> Self
+impl core::convert::From<i16> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i16) -> Self
+impl core::convert::From<i32> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i32) -> Self
+impl core::convert::From<i64> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i64) -> Self
+impl core::convert::From<i8> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(i8) -> Self
+impl core::convert::From<isize> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(isize) -> Self
+impl core::convert::From<u128> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u128) -> Self
+impl core::convert::From<u16> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u16) -> Self
+impl core::convert::From<u32> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u32) -> Self
+impl core::convert::From<u64> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u64) -> Self
+impl core::convert::From<u8> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(u8) -> Self
+impl core::convert::From<usize> for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::from(usize) -> Self
+impl core::fmt::Debug for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::telemetry::FieldValue
+pub fn kernel_core::telemetry::FieldValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::FieldValue
+impl core::marker::Freeze for kernel_core::telemetry::FieldValue
+impl core::marker::Send for kernel_core::telemetry::FieldValue
+impl core::marker::Sync for kernel_core::telemetry::FieldValue
+impl core::marker::Unpin for kernel_core::telemetry::FieldValue
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::FieldValue
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::FieldValue
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::FieldValue
+pub enum kernel_core::Flow
+pub kernel_core::Flow::Continue
+pub kernel_core::Flow::Stop
+impl kernel_core::event::Flow
+pub fn kernel_core::event::Flow::is_continue(self) -> bool
+pub fn kernel_core::event::Flow::is_stop(self) -> bool
+impl core::clone::Clone for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::clone(&self) -> kernel_core::event::Flow
+impl core::clone::TrivialClone for kernel_core::event::Flow
+impl core::cmp::Eq for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::eq(&self, &kernel_core::event::Flow) -> bool
+impl core::default::Default for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::default() -> kernel_core::event::Flow
+impl core::fmt::Debug for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::event::Flow
+pub fn kernel_core::event::Flow::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::event::Flow
+impl core::marker::StructuralPartialEq for kernel_core::event::Flow
+impl core::marker::Freeze for kernel_core::event::Flow
+impl core::marker::Send for kernel_core::event::Flow
+impl core::marker::Sync for kernel_core::event::Flow
+impl core::marker::Unpin for kernel_core::event::Flow
+impl core::marker::UnsafeUnpin for kernel_core::event::Flow
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::event::Flow
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::event::Flow
+pub enum kernel_core::Health
+pub kernel_core::Health::Degraded
+pub kernel_core::Health::Degraded::detail: alloc::string::String
+pub kernel_core::Health::Down
+pub kernel_core::Health::Down::detail: alloc::string::String
+pub kernel_core::Health::Up
+impl kernel_core::health::Health
+pub fn kernel_core::health::Health::degraded(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::health::Health::detail(&self) -> core::option::Option<&str>
+pub fn kernel_core::health::Health::down(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::health::Health::is_up(&self) -> bool
+pub fn kernel_core::health::Health::worst(kernel_core::health::Health, kernel_core::health::Health) -> kernel_core::health::Health
+pub fn kernel_core::health::Health::worst_of<I: core::iter::traits::collect::IntoIterator<Item = kernel_core::health::Health>>(I) -> kernel_core::health::Health
+impl core::clone::Clone for kernel_core::health::Health
+pub fn kernel_core::health::Health::clone(&self) -> kernel_core::health::Health
+impl core::cmp::Eq for kernel_core::health::Health
+pub fn kernel_core::health::Health::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::health::Health
+pub fn kernel_core::health::Health::eq(&self, &kernel_core::health::Health) -> bool
+impl core::default::Default for kernel_core::health::Health
+pub fn kernel_core::health::Health::default() -> Self
+impl core::fmt::Debug for kernel_core::health::Health
+pub fn kernel_core::health::Health::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::health::Health
+pub fn kernel_core::health::Health::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::health::Health
+pub fn kernel_core::health::Health::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for kernel_core::health::Health
+impl core::marker::Freeze for kernel_core::health::Health
+impl core::marker::Send for kernel_core::health::Health
+impl core::marker::Sync for kernel_core::health::Health
+impl core::marker::Unpin for kernel_core::health::Health
+impl core::marker::UnsafeUnpin for kernel_core::health::Health
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::health::Health
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::health::Health
+pub enum kernel_core::KernelError
+pub kernel_core::KernelError::Boot
+pub kernel_core::KernelError::Boot::component: kernel_core::id::ComponentId
+pub kernel_core::KernelError::Boot::rolled_back: alloc::vec::Vec<kernel_core::id::ComponentId>
+pub kernel_core::KernelError::Boot::source: kernel_core::error::ComponentError
+pub kernel_core::KernelError::Config(alloc::vec::Vec<kernel_core::error::ConfigError>)
+pub kernel_core::KernelError::Register(alloc::vec::Vec<kernel_core::error::RegisterError>)
+pub kernel_core::KernelError::Resolve(alloc::vec::Vec<kernel_core::error::ResolveError>)
+pub kernel_core::KernelError::Run(alloc::vec::Vec<kernel_core::error::RunError>)
+pub kernel_core::KernelError::Shutdown(alloc::vec::Vec<kernel_core::error::ShutdownError>)
+impl core::error::Error for kernel_core::error::KernelError
+pub fn kernel_core::error::KernelError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::KernelError
+pub fn kernel_core::error::KernelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::KernelError
+pub fn kernel_core::error::KernelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::KernelError
+impl core::marker::Send for kernel_core::error::KernelError
+impl core::marker::Sync for kernel_core::error::KernelError
+impl core::marker::Unpin for kernel_core::error::KernelError
+impl core::marker::UnsafeUnpin for kernel_core::error::KernelError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::KernelError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::KernelError
+pub enum kernel_core::Level
+pub kernel_core::Level::Debug
+pub kernel_core::Level::Error
+pub kernel_core::Level::Info
+pub kernel_core::Level::Warn
+impl kernel_core::telemetry::Level
+pub const fn kernel_core::telemetry::Level::as_str(self) -> &'static str
+impl core::clone::Clone for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::clone(&self) -> kernel_core::telemetry::Level
+impl core::clone::TrivialClone for kernel_core::telemetry::Level
+impl core::cmp::Eq for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::assert_fields_are_eq(&self)
+impl core::cmp::Ord for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::cmp(&self, &kernel_core::telemetry::Level) -> core::cmp::Ordering
+impl core::cmp::PartialEq for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::eq(&self, &kernel_core::telemetry::Level) -> bool
+impl core::cmp::PartialOrd for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::partial_cmp(&self, &kernel_core::telemetry::Level) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::telemetry::Level
+pub fn kernel_core::telemetry::Level::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::telemetry::Level
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::Level
+impl core::marker::Freeze for kernel_core::telemetry::Level
+impl core::marker::Send for kernel_core::telemetry::Level
+impl core::marker::Sync for kernel_core::telemetry::Level
+impl core::marker::Unpin for kernel_core::telemetry::Level
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::Level
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::Level
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::Level
+pub enum kernel_core::Lifetime
+pub kernel_core::Lifetime::Factory
+pub kernel_core::Lifetime::Scoped
+pub kernel_core::Lifetime::Shared
+impl kernel_core::descriptor::Lifetime
+pub const fn kernel_core::descriptor::Lifetime::as_str(&self) -> &'static str
+impl core::clone::Clone for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::clone(&self) -> kernel_core::descriptor::Lifetime
+impl core::clone::TrivialClone for kernel_core::descriptor::Lifetime
+impl core::cmp::Eq for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::eq(&self, &kernel_core::descriptor::Lifetime) -> bool
+impl core::default::Default for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::default() -> kernel_core::descriptor::Lifetime
+impl core::fmt::Debug for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::Lifetime
+pub fn kernel_core::descriptor::Lifetime::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::Lifetime
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Lifetime
+impl core::marker::Freeze for kernel_core::descriptor::Lifetime
+impl core::marker::Send for kernel_core::descriptor::Lifetime
+impl core::marker::Sync for kernel_core::descriptor::Lifetime
+impl core::marker::Unpin for kernel_core::descriptor::Lifetime
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Lifetime
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Lifetime
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Lifetime
+pub enum kernel_core::Outcome
+pub kernel_core::Outcome::Completed
+pub kernel_core::Outcome::Failed(kernel_core::error::KernelError)
+pub kernel_core::Outcome::ShutdownRequested
+impl kernel_core::error::Outcome
+pub fn kernel_core::error::Outcome::error(&self) -> core::option::Option<&kernel_core::error::KernelError>
+pub fn kernel_core::error::Outcome::into_exit_code(self) -> std::process::ExitCode
+pub fn kernel_core::error::Outcome::is_success(&self) -> bool
+impl core::fmt::Debug for kernel_core::error::Outcome
+pub fn kernel_core::error::Outcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::Outcome
+impl core::marker::Send for kernel_core::error::Outcome
+impl core::marker::Sync for kernel_core::error::Outcome
+impl core::marker::Unpin for kernel_core::error::Outcome
+impl core::marker::UnsafeUnpin for kernel_core::error::Outcome
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::Outcome
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::Outcome
+pub enum kernel_core::ResolveError
+pub kernel_core::ResolveError::BundleCycle
+pub kernel_core::ResolveError::BundleCycle::path: alloc::vec::Vec<&'static str>
+pub kernel_core::ResolveError::BundleOutOfOrder
+pub kernel_core::ResolveError::BundleOutOfOrder::after: &'static str
+pub kernel_core::ResolveError::BundleOutOfOrder::bundle: &'static str
+pub kernel_core::ResolveError::Cycle
+pub kernel_core::ResolveError::Cycle::path: alloc::vec::Vec<kernel_core::id::ContractRef>
+pub kernel_core::ResolveError::DuplicateBundle
+pub kernel_core::ResolveError::DuplicateBundle::name: &'static str
+pub kernel_core::ResolveError::DuplicateDefault
+pub kernel_core::ResolveError::DuplicateDefault::contract: kernel_core::id::ContractRef
+pub kernel_core::ResolveError::DuplicateDefault::first: &'static str
+pub kernel_core::ResolveError::DuplicateDefault::second: &'static str
+pub kernel_core::ResolveError::DuplicateNamed
+pub kernel_core::ResolveError::DuplicateNamed::contract: kernel_core::id::ContractRef
+pub kernel_core::ResolveError::DuplicateNamed::first: &'static str
+pub kernel_core::ResolveError::DuplicateNamed::name: &'static str
+pub kernel_core::ResolveError::DuplicateNamed::second: &'static str
+pub kernel_core::ResolveError::LifetimeConflict
+pub kernel_core::ResolveError::LifetimeConflict::bundle: &'static str
+pub kernel_core::ResolveError::LifetimeConflict::required_by: &'static str
+pub kernel_core::ResolveError::LifetimeConflict::requires: kernel_core::id::ContractRef
+pub kernel_core::ResolveError::ManifestMismatch
+pub kernel_core::ResolveError::ManifestMismatch::bundle: &'static str
+pub kernel_core::ResolveError::ManifestMismatch::declared: kernel_core::id::ContractRef
+pub kernel_core::ResolveError::MissingContract
+pub kernel_core::ResolveError::MissingContract::contract: kernel_core::id::ContractRef
+pub kernel_core::ResolveError::MissingContract::required_by: &'static str
+pub kernel_core::ResolveError::ScopeMismatch
+pub kernel_core::ResolveError::ScopeMismatch::bundle: &'static str
+pub kernel_core::ResolveError::ScopeMismatch::lifetime: kernel_core::descriptor::Lifetime
+pub kernel_core::ResolveError::ScopeMismatch::required_by: &'static str
+pub kernel_core::ResolveError::ScopeMismatch::requires: kernel_core::id::ContractRef
+pub kernel_core::ResolveError::UndeclaredExtensionPoint
+pub kernel_core::ResolveError::UndeclaredExtensionPoint::contributed_by: &'static str
+pub kernel_core::ResolveError::UndeclaredExtensionPoint::extension: kernel_core::id::ExtensionId
+pub kernel_core::ResolveError::UnknownBundleOrder
+pub kernel_core::ResolveError::UnknownBundleOrder::after: &'static str
+pub kernel_core::ResolveError::UnknownBundleOrder::bundle: &'static str
+impl core::error::Error for kernel_core::error::ResolveError
+impl core::fmt::Debug for kernel_core::error::ResolveError
+pub fn kernel_core::error::ResolveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ResolveError
+pub fn kernel_core::error::ResolveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ResolveError
+impl core::marker::Send for kernel_core::error::ResolveError
+impl core::marker::Sync for kernel_core::error::ResolveError
+impl core::marker::Unpin for kernel_core::error::ResolveError
+impl core::marker::UnsafeUnpin for kernel_core::error::ResolveError
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ResolveError
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::error::ResolveError
+pub enum kernel_core::RestartPolicy
+pub kernel_core::RestartPolicy::Never
+pub kernel_core::RestartPolicy::OnFailure
+pub kernel_core::RestartPolicy::OnFailure::backoff: kernel_core::descriptor::Backoff
+pub kernel_core::RestartPolicy::OnFailure::max_attempts: u32
+impl kernel_core::descriptor::RestartPolicy
+pub const fn kernel_core::descriptor::RestartPolicy::allows(&self, u32) -> bool
+pub const fn kernel_core::descriptor::RestartPolicy::on_failure(u32, kernel_core::descriptor::Backoff) -> Self
+impl core::clone::Clone for kernel_core::descriptor::RestartPolicy
+pub fn kernel_core::descriptor::RestartPolicy::clone(&self) -> kernel_core::descriptor::RestartPolicy
+impl core::clone::TrivialClone for kernel_core::descriptor::RestartPolicy
+impl core::cmp::PartialEq for kernel_core::descriptor::RestartPolicy
+pub fn kernel_core::descriptor::RestartPolicy::eq(&self, &kernel_core::descriptor::RestartPolicy) -> bool
+impl core::default::Default for kernel_core::descriptor::RestartPolicy
+pub fn kernel_core::descriptor::RestartPolicy::default() -> kernel_core::descriptor::RestartPolicy
+impl core::fmt::Debug for kernel_core::descriptor::RestartPolicy
+pub fn kernel_core::descriptor::RestartPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::descriptor::RestartPolicy
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::RestartPolicy
+impl core::marker::Freeze for kernel_core::descriptor::RestartPolicy
+impl core::marker::Send for kernel_core::descriptor::RestartPolicy
+impl core::marker::Sync for kernel_core::descriptor::RestartPolicy
+impl core::marker::Unpin for kernel_core::descriptor::RestartPolicy
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::RestartPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::RestartPolicy
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::RestartPolicy
+pub enum kernel_core::RunErrorKind
+pub kernel_core::RunErrorKind::Cancelled
+pub kernel_core::RunErrorKind::DeadlineExceeded
+pub kernel_core::RunErrorKind::Failed(kernel_core::error::BoxSource)
+pub kernel_core::RunErrorKind::Panicked(alloc::string::String)
+impl core::convert::From<kernel_core::error::Aborted> for kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunErrorKind::from(kernel_core::error::Aborted) -> Self
+impl core::fmt::Debug for kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::RunErrorKind
+impl core::marker::Send for kernel_core::error::RunErrorKind
+impl core::marker::Sync for kernel_core::error::RunErrorKind
+impl core::marker::Unpin for kernel_core::error::RunErrorKind
+impl core::marker::UnsafeUnpin for kernel_core::error::RunErrorKind
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::RunErrorKind
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::RunErrorKind
+pub enum kernel_core::Scalar
+pub kernel_core::Scalar::Bool(bool)
+pub kernel_core::Scalar::Float(f64)
+pub kernel_core::Scalar::Int(i64)
+pub kernel_core::Scalar::Null
+pub kernel_core::Scalar::Str(alloc::string::String)
+impl kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::kind_name(&self) -> &'static str
+impl core::clone::Clone for kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::clone(&self) -> kernel_core::config::Scalar
+impl core::cmp::PartialEq for kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::eq(&self, &kernel_core::config::Scalar) -> bool
+impl core::fmt::Debug for kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::config::Scalar
+pub fn kernel_core::config::Scalar::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::config::Scalar
+impl core::marker::Freeze for kernel_core::config::Scalar
+impl core::marker::Send for kernel_core::config::Scalar
+impl core::marker::Sync for kernel_core::config::Scalar
+impl core::marker::Unpin for kernel_core::config::Scalar
+impl core::marker::UnsafeUnpin for kernel_core::config::Scalar
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::config::Scalar
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::config::Scalar
+pub enum kernel_core::ShutdownErrorKind
+pub kernel_core::ShutdownErrorKind::DeadlineExceeded
+pub kernel_core::ShutdownErrorKind::Failed(kernel_core::error::BoxSource)
+impl core::fmt::Debug for kernel_core::error::ShutdownErrorKind
+pub fn kernel_core::error::ShutdownErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ShutdownErrorKind
+pub fn kernel_core::error::ShutdownErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ShutdownErrorKind
+impl core::marker::Send for kernel_core::error::ShutdownErrorKind
+impl core::marker::Sync for kernel_core::error::ShutdownErrorKind
+impl core::marker::Unpin for kernel_core::error::ShutdownErrorKind
+impl core::marker::UnsafeUnpin for kernel_core::error::ShutdownErrorKind
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ShutdownErrorKind
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ShutdownErrorKind
+pub enum kernel_core::Stage
+pub kernel_core::Stage::Draining
+pub kernel_core::Stage::Running
+pub kernel_core::Stage::Stopped
+pub kernel_core::Stage::Stopping
+impl kernel_core::descriptor::Stage
+pub const fn kernel_core::descriptor::Stage::as_str(&self) -> &'static str
+pub const fn kernel_core::descriptor::Stage::is_shutting_down(&self) -> bool
+pub const fn kernel_core::descriptor::Stage::is_terminal(&self) -> bool
+impl core::clone::Clone for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::clone(&self) -> kernel_core::descriptor::Stage
+impl core::clone::TrivialClone for kernel_core::descriptor::Stage
+impl core::cmp::Eq for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::assert_fields_are_eq(&self)
+impl core::cmp::Ord for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::cmp(&self, &kernel_core::descriptor::Stage) -> core::cmp::Ordering
+impl core::cmp::PartialEq for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::eq(&self, &kernel_core::descriptor::Stage) -> bool
+impl core::cmp::PartialOrd for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::partial_cmp(&self, &kernel_core::descriptor::Stage) -> core::option::Option<core::cmp::Ordering>
+impl core::default::Default for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::default() -> kernel_core::descriptor::Stage
+impl core::fmt::Debug for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::Stage
+pub fn kernel_core::descriptor::Stage::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::Stage
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Stage
+impl core::marker::Freeze for kernel_core::descriptor::Stage
+impl core::marker::Send for kernel_core::descriptor::Stage
+impl core::marker::Sync for kernel_core::descriptor::Stage
+impl core::marker::Unpin for kernel_core::descriptor::Stage
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Stage
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Stage
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Stage
+pub struct kernel_core::Aborted
+impl kernel_core::error::Aborted
+pub const fn kernel_core::error::Aborted::deadline_exceeded() -> Self
+pub fn kernel_core::error::Aborted::find(&(dyn core::error::Error + 'static)) -> core::option::Option<Self>
+pub const fn kernel_core::error::Aborted::new(kernel_core::error::AbortReason) -> Self
+pub const fn kernel_core::error::Aborted::reason(self) -> kernel_core::error::AbortReason
+pub const fn kernel_core::error::Aborted::shutdown_requested() -> Self
+impl core::clone::Clone for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::clone(&self) -> kernel_core::error::Aborted
+impl core::clone::TrivialClone for kernel_core::error::Aborted
+impl core::cmp::Eq for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::eq(&self, &kernel_core::error::Aborted) -> bool
+impl core::convert::From<kernel_core::error::AbortReason> for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::from(kernel_core::error::AbortReason) -> Self
+impl core::convert::From<kernel_core::error::Aborted> for kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunErrorKind::from(kernel_core::error::Aborted) -> Self
+impl core::error::Error for kernel_core::error::Aborted
+impl core::fmt::Debug for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::error::Aborted
+pub fn kernel_core::error::Aborted::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::error::Aborted
+impl core::marker::StructuralPartialEq for kernel_core::error::Aborted
+impl core::marker::Freeze for kernel_core::error::Aborted
+impl core::marker::Send for kernel_core::error::Aborted
+impl core::marker::Sync for kernel_core::error::Aborted
+impl core::marker::Unpin for kernel_core::error::Aborted
+impl core::marker::UnsafeUnpin for kernel_core::error::Aborted
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::Aborted
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::error::Aborted
+pub struct kernel_core::BuildError
+impl kernel_core::error::BuildError
+pub fn kernel_core::error::BuildError::cause(&self) -> &kernel_core::error::BoxSource
+pub fn kernel_core::error::BuildError::contract(&self) -> &'static str
+pub fn kernel_core::error::BuildError::new(&'static str, kernel_core::error::BoxSource) -> Self
+impl core::convert::From<kernel_core::error::BuildError> for kernel_core::error::ContainerError
+pub fn kernel_core::error::ContainerError::from(kernel_core::error::BuildError) -> Self
+impl core::error::Error for kernel_core::error::BuildError
+pub fn kernel_core::error::BuildError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::BuildError
+pub fn kernel_core::error::BuildError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::BuildError
+pub fn kernel_core::error::BuildError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::BuildError
+impl core::marker::Send for kernel_core::error::BuildError
+impl core::marker::Sync for kernel_core::error::BuildError
+impl core::marker::Unpin for kernel_core::error::BuildError
+impl core::marker::UnsafeUnpin for kernel_core::error::BuildError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::BuildError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::BuildError
+pub struct kernel_core::BundleManifest
+pub kernel_core::BundleManifest::after: &'static [&'static str]
+pub kernel_core::BundleManifest::name: &'static str
+pub kernel_core::BundleManifest::requires: &'static [kernel_core::id::ContractRef]
+pub kernel_core::BundleManifest::version: &'static str
+impl kernel_core::descriptor::BundleManifest
+pub const fn kernel_core::descriptor::BundleManifest::after(self, &'static [&'static str]) -> Self
+pub const fn kernel_core::descriptor::BundleManifest::new(&'static str, &'static str) -> Self
+pub const fn kernel_core::descriptor::BundleManifest::requires(self, &'static [kernel_core::id::ContractRef]) -> Self
+impl core::clone::Clone for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::clone(&self) -> kernel_core::descriptor::BundleManifest
+impl core::clone::TrivialClone for kernel_core::descriptor::BundleManifest
+impl core::cmp::Eq for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::eq(&self, &kernel_core::descriptor::BundleManifest) -> bool
+impl core::fmt::Debug for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::BundleManifest
+pub fn kernel_core::descriptor::BundleManifest::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::BundleManifest
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::BundleManifest
+impl core::marker::Freeze for kernel_core::descriptor::BundleManifest
+impl core::marker::Send for kernel_core::descriptor::BundleManifest
+impl core::marker::Sync for kernel_core::descriptor::BundleManifest
+impl core::marker::Unpin for kernel_core::descriptor::BundleManifest
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::BundleManifest
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::BundleManifest
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::BundleManifest
+pub struct kernel_core::ComponentDescriptor
+pub kernel_core::ComponentDescriptor::boot_timeout: core::option::Option<core::time::Duration>
+pub kernel_core::ComponentDescriptor::shutdown_timeout: core::option::Option<core::time::Duration>
+impl kernel_core::descriptor::ComponentDescriptor
+pub const fn kernel_core::descriptor::ComponentDescriptor::boot_timeout(self, core::time::Duration) -> Self
+pub const fn kernel_core::descriptor::ComponentDescriptor::new() -> Self
+pub const fn kernel_core::descriptor::ComponentDescriptor::shutdown_timeout(self, core::time::Duration) -> Self
+impl core::clone::Clone for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::clone(&self) -> kernel_core::descriptor::ComponentDescriptor
+impl core::clone::TrivialClone for kernel_core::descriptor::ComponentDescriptor
+impl core::cmp::Eq for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::eq(&self, &kernel_core::descriptor::ComponentDescriptor) -> bool
+impl core::default::Default for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::default() -> kernel_core::descriptor::ComponentDescriptor
+impl core::fmt::Debug for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_core::descriptor::ComponentDescriptor::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::Freeze for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::Send for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::Sync for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::Unpin for kernel_core::descriptor::ComponentDescriptor
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::ComponentDescriptor
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::ComponentDescriptor
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::ComponentDescriptor
+pub struct kernel_core::ComponentError
+impl kernel_core::error::ComponentError
+pub fn kernel_core::error::ComponentError::cause(&self) -> &kernel_core::error::BoxSource
+pub fn kernel_core::error::ComponentError::component(&self) -> kernel_core::id::ComponentId
+pub fn kernel_core::error::ComponentError::new(kernel_core::id::ComponentId, kernel_core::error::BoxSource) -> Self
+impl core::error::Error for kernel_core::error::ComponentError
+pub fn kernel_core::error::ComponentError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ComponentError
+pub fn kernel_core::error::ComponentError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ComponentError
+pub fn kernel_core::error::ComponentError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ComponentError
+impl core::marker::Send for kernel_core::error::ComponentError
+impl core::marker::Sync for kernel_core::error::ComponentError
+impl core::marker::Unpin for kernel_core::error::ComponentError
+impl core::marker::UnsafeUnpin for kernel_core::error::ComponentError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ComponentError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ComponentError
+pub struct kernel_core::ComponentId
+impl kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::index(&self) -> u32
+pub fn kernel_core::id::ComponentId::name(&self) -> &'static str
+pub const fn kernel_core::id::ComponentId::new(&'static str, u32) -> Self
+impl core::clone::Clone for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::clone(&self) -> kernel_core::id::ComponentId
+impl core::clone::TrivialClone for kernel_core::id::ComponentId
+impl core::cmp::Eq for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::eq(&self, &kernel_core::id::ComponentId) -> bool
+impl core::fmt::Debug for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::ComponentId
+pub fn kernel_core::id::ComponentId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::id::ComponentId
+impl core::marker::StructuralPartialEq for kernel_core::id::ComponentId
+impl core::marker::Freeze for kernel_core::id::ComponentId
+impl core::marker::Send for kernel_core::id::ComponentId
+impl core::marker::Sync for kernel_core::id::ComponentId
+impl core::marker::Unpin for kernel_core::id::ComponentId
+impl core::marker::UnsafeUnpin for kernel_core::id::ComponentId
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::ComponentId
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::ComponentId
+pub struct kernel_core::ConfigError
+impl kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::invalid(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::error::ConfigError::kind(&self) -> &kernel_core::error::ConfigErrorKind
+pub fn kernel_core::error::ConfigError::missing(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::error::ConfigError::path(&self) -> &str
+pub fn kernel_core::error::ConfigError::source_error(impl core::convert::Into<alloc::string::String>, kernel_core::error::BoxSource) -> Self
+pub fn kernel_core::error::ConfigError::type_mismatch(impl core::convert::Into<alloc::string::String>, &'static str, &'static str) -> Self
+impl kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::under(self, &str) -> kernel_core::error::ConfigError
+impl core::error::Error for kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ConfigError
+pub fn kernel_core::error::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ConfigError
+impl core::marker::Send for kernel_core::error::ConfigError
+impl core::marker::Sync for kernel_core::error::ConfigError
+impl core::marker::Unpin for kernel_core::error::ConfigError
+impl core::marker::UnsafeUnpin for kernel_core::error::ConfigError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ConfigError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ConfigError
+pub struct kernel_core::ConfigTree
+impl kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::empty() -> Self
+pub fn kernel_core::config::ConfigTree::from_node(kernel_core::config::ConfigNode) -> Self
+pub fn kernel_core::config::ConfigTree::get(&self, &str) -> core::option::Option<&kernel_core::config::ConfigNode>
+pub fn kernel_core::config::ConfigTree::insert(&mut self, &str, kernel_core::config::ConfigNode) -> core::result::Result<(), kernel_core::error::ConfigError>
+pub fn kernel_core::config::ConfigTree::into_root(self) -> kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigTree::merge(&mut self, kernel_core::config::ConfigTree)
+pub fn kernel_core::config::ConfigTree::root(&self) -> &kernel_core::config::ConfigNode
+impl core::clone::Clone for kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::clone(&self) -> kernel_core::config::ConfigTree
+impl core::cmp::PartialEq for kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::eq(&self, &kernel_core::config::ConfigTree) -> bool
+impl core::default::Default for kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::default() -> Self
+impl core::fmt::Debug for kernel_core::config::ConfigTree
+pub fn kernel_core::config::ConfigTree::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::config::ConfigTree
+impl core::marker::Freeze for kernel_core::config::ConfigTree
+impl core::marker::Send for kernel_core::config::ConfigTree
+impl core::marker::Sync for kernel_core::config::ConfigTree
+impl core::marker::Unpin for kernel_core::config::ConfigTree
+impl core::marker::UnsafeUnpin for kernel_core::config::ConfigTree
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::config::ConfigTree
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::config::ConfigTree
+pub struct kernel_core::ContractId
+pub kernel_core::ContractId::name: core::option::Option<&'static str>
+pub kernel_core::ContractId::type_id: core::any::TypeId
+impl kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::named<C: ?core::marker::Sized + 'static>(&'static str) -> Self
+pub fn kernel_core::id::ContractId::of<C: ?core::marker::Sized + 'static>() -> Self
+impl core::clone::Clone for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::clone(&self) -> kernel_core::id::ContractId
+impl core::clone::TrivialClone for kernel_core::id::ContractId
+impl core::cmp::Eq for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::eq(&self, &kernel_core::id::ContractId) -> bool
+impl core::convert::From<kernel_core::id::ContractRef> for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::from(kernel_core::id::ContractRef) -> Self
+impl core::fmt::Debug for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::id::ContractId
+impl core::marker::StructuralPartialEq for kernel_core::id::ContractId
+impl core::marker::Freeze for kernel_core::id::ContractId
+impl core::marker::Send for kernel_core::id::ContractId
+impl core::marker::Sync for kernel_core::id::ContractId
+impl core::marker::Unpin for kernel_core::id::ContractId
+impl core::marker::UnsafeUnpin for kernel_core::id::ContractId
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::ContractId
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::ContractId
+pub struct kernel_core::ContractRef
+impl kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::id(&self) -> kernel_core::id::ContractId
+pub fn kernel_core::id::ContractRef::name(&self) -> core::option::Option<&'static str>
+pub const fn kernel_core::id::ContractRef::named<C: ?core::marker::Sized + 'static>(&'static str) -> Self
+pub const fn kernel_core::id::ContractRef::of<C: ?core::marker::Sized + 'static>() -> Self
+pub fn kernel_core::id::ContractRef::type_name(&self) -> &'static str
+impl core::clone::Clone for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::clone(&self) -> kernel_core::id::ContractRef
+impl core::clone::TrivialClone for kernel_core::id::ContractRef
+impl core::cmp::Eq for kernel_core::id::ContractRef
+impl core::cmp::PartialEq for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::eq(&self, &Self) -> bool
+impl core::convert::From<kernel_core::id::ContractRef> for kernel_core::id::ContractId
+pub fn kernel_core::id::ContractId::from(kernel_core::id::ContractRef) -> Self
+impl core::fmt::Debug for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::ContractRef
+pub fn kernel_core::id::ContractRef::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::Copy for kernel_core::id::ContractRef
+impl core::marker::Freeze for kernel_core::id::ContractRef
+impl core::marker::Send for kernel_core::id::ContractRef
+impl core::marker::Sync for kernel_core::id::ContractRef
+impl core::marker::Unpin for kernel_core::id::ContractRef
+impl core::marker::UnsafeUnpin for kernel_core::id::ContractRef
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::ContractRef
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::ContractRef
+pub struct kernel_core::DispatchError
+impl kernel_core::error::DispatchError
+pub fn kernel_core::error::DispatchError::cause(&self) -> &kernel_core::error::ListenerError
+pub fn kernel_core::error::DispatchError::event(&self) -> &'static str
+pub fn kernel_core::error::DispatchError::new(&'static str, kernel_core::error::ListenerError) -> Self
+impl core::error::Error for kernel_core::error::DispatchError
+pub fn kernel_core::error::DispatchError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::DispatchError
+pub fn kernel_core::error::DispatchError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::DispatchError
+pub fn kernel_core::error::DispatchError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::DispatchError
+impl core::marker::Send for kernel_core::error::DispatchError
+impl core::marker::Sync for kernel_core::error::DispatchError
+impl core::marker::Unpin for kernel_core::error::DispatchError
+impl core::marker::UnsafeUnpin for kernel_core::error::DispatchError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::DispatchError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::DispatchError
+pub struct kernel_core::ExtensionId
+pub kernel_core::ExtensionId::type_id: core::any::TypeId
+pub kernel_core::ExtensionId::type_name: &'static str
+impl kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::of<X: 'static>() -> Self
+impl core::clone::Clone for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::clone(&self) -> kernel_core::id::ExtensionId
+impl core::clone::TrivialClone for kernel_core::id::ExtensionId
+impl core::cmp::Eq for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::eq(&self, &kernel_core::id::ExtensionId) -> bool
+impl core::fmt::Debug for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::ExtensionId
+pub fn kernel_core::id::ExtensionId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::id::ExtensionId
+impl core::marker::StructuralPartialEq for kernel_core::id::ExtensionId
+impl core::marker::Freeze for kernel_core::id::ExtensionId
+impl core::marker::Send for kernel_core::id::ExtensionId
+impl core::marker::Sync for kernel_core::id::ExtensionId
+impl core::marker::Unpin for kernel_core::id::ExtensionId
+impl core::marker::UnsafeUnpin for kernel_core::id::ExtensionId
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::ExtensionId
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::ExtensionId
+pub struct kernel_core::Field
+pub kernel_core::Field::key: &'static str
+pub kernel_core::Field::value: kernel_core::telemetry::FieldValue
+impl kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::new(&'static str, impl core::convert::Into<kernel_core::telemetry::FieldValue>) -> Self
+impl core::clone::Clone for kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::clone(&self) -> kernel_core::telemetry::Field
+impl core::cmp::Eq for kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::eq(&self, &kernel_core::telemetry::Field) -> bool
+impl core::fmt::Debug for kernel_core::telemetry::Field
+pub fn kernel_core::telemetry::Field::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::Field
+impl core::marker::Freeze for kernel_core::telemetry::Field
+impl core::marker::Send for kernel_core::telemetry::Field
+impl core::marker::Sync for kernel_core::telemetry::Field
+impl core::marker::Unpin for kernel_core::telemetry::Field
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::Field
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::Field
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::Field
+pub struct kernel_core::ListenerError
+impl kernel_core::error::ListenerError
+pub fn kernel_core::error::ListenerError::cause(&self) -> &kernel_core::error::BoxSource
+pub fn kernel_core::error::ListenerError::event(&self) -> &'static str
+pub fn kernel_core::error::ListenerError::new(&'static str, kernel_core::error::BoxSource) -> Self
+impl core::error::Error for kernel_core::error::ListenerError
+pub fn kernel_core::error::ListenerError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ListenerError
+pub fn kernel_core::error::ListenerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ListenerError
+pub fn kernel_core::error::ListenerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ListenerError
+impl core::marker::Send for kernel_core::error::ListenerError
+impl core::marker::Sync for kernel_core::error::ListenerError
+impl core::marker::Unpin for kernel_core::error::ListenerError
+impl core::marker::UnsafeUnpin for kernel_core::error::ListenerError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ListenerError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ListenerError
+pub struct kernel_core::NoopTelemetry
+impl core::clone::Clone for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::clone(&self) -> kernel_core::telemetry::NoopTelemetry
+impl core::clone::TrivialClone for kernel_core::telemetry::NoopTelemetry
+impl core::cmp::Eq for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::eq(&self, &kernel_core::telemetry::NoopTelemetry) -> bool
+impl core::default::Default for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::default() -> kernel_core::telemetry::NoopTelemetry
+impl core::fmt::Debug for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::telemetry::NoopTelemetry
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::NoopTelemetry
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::record(&self, kernel_core::telemetry::Record)
+impl core::marker::Freeze for kernel_core::telemetry::NoopTelemetry
+impl core::marker::Send for kernel_core::telemetry::NoopTelemetry
+impl core::marker::Sync for kernel_core::telemetry::NoopTelemetry
+impl core::marker::Unpin for kernel_core::telemetry::NoopTelemetry
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::NoopTelemetry
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::NoopTelemetry
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::NoopTelemetry
+pub struct kernel_core::Priority(pub i32)
+impl kernel_core::descriptor::Priority
+pub const kernel_core::descriptor::Priority::HIGH: kernel_core::descriptor::Priority
+pub const kernel_core::descriptor::Priority::LOW: kernel_core::descriptor::Priority
+pub const kernel_core::descriptor::Priority::NORMAL: kernel_core::descriptor::Priority
+pub const fn kernel_core::descriptor::Priority::get(&self) -> i32
+pub const fn kernel_core::descriptor::Priority::new(i32) -> Self
+impl core::clone::Clone for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::clone(&self) -> kernel_core::descriptor::Priority
+impl core::clone::TrivialClone for kernel_core::descriptor::Priority
+impl core::cmp::Eq for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::assert_fields_are_eq(&self)
+impl core::cmp::Ord for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::cmp(&self, &kernel_core::descriptor::Priority) -> core::cmp::Ordering
+impl core::cmp::PartialEq for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::eq(&self, &kernel_core::descriptor::Priority) -> bool
+impl core::cmp::PartialOrd for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::partial_cmp(&self, &kernel_core::descriptor::Priority) -> core::option::Option<core::cmp::Ordering>
+impl core::default::Default for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::default() -> kernel_core::descriptor::Priority
+impl core::fmt::Debug for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::Priority
+pub fn kernel_core::descriptor::Priority::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::Priority
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::Priority
+impl core::marker::Freeze for kernel_core::descriptor::Priority
+impl core::marker::Send for kernel_core::descriptor::Priority
+impl core::marker::Sync for kernel_core::descriptor::Priority
+impl core::marker::Unpin for kernel_core::descriptor::Priority
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::Priority
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::Priority
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::Priority
+pub struct kernel_core::Record
+pub kernel_core::Record::event: &'static str
+pub kernel_core::Record::fields: alloc::vec::Vec<kernel_core::telemetry::Field>
+pub kernel_core::Record::level: kernel_core::telemetry::Level
+impl kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::bool(&self, &str) -> core::option::Option<bool>
+pub fn kernel_core::telemetry::Record::duration(&self, &str) -> core::option::Option<core::time::Duration>
+pub fn kernel_core::telemetry::Record::field(&self, &str) -> core::option::Option<&kernel_core::telemetry::FieldValue>
+pub fn kernel_core::telemetry::Record::int(&self, &str) -> core::option::Option<i64>
+pub const fn kernel_core::telemetry::Record::new(kernel_core::telemetry::Level, &'static str) -> Self
+pub fn kernel_core::telemetry::Record::str(&self, &str) -> core::option::Option<&str>
+pub fn kernel_core::telemetry::Record::with(self, &'static str, impl core::convert::Into<kernel_core::telemetry::FieldValue>) -> Self
+impl core::clone::Clone for kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::clone(&self) -> kernel_core::telemetry::Record
+impl core::cmp::Eq for kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::eq(&self, &kernel_core::telemetry::Record) -> bool
+impl core::fmt::Debug for kernel_core::telemetry::Record
+pub fn kernel_core::telemetry::Record::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::Record
+impl core::marker::Freeze for kernel_core::telemetry::Record
+impl core::marker::Send for kernel_core::telemetry::Record
+impl core::marker::Sync for kernel_core::telemetry::Record
+impl core::marker::Unpin for kernel_core::telemetry::Record
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::Record
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::Record
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::Record
+pub struct kernel_core::RecordingTelemetry
+impl kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::clear(&self)
+pub fn kernel_core::telemetry::RecordingTelemetry::contains(&self, &str) -> bool
+pub fn kernel_core::telemetry::RecordingTelemetry::is_empty(&self) -> bool
+pub fn kernel_core::telemetry::RecordingTelemetry::len(&self) -> usize
+pub fn kernel_core::telemetry::RecordingTelemetry::new() -> Self
+pub fn kernel_core::telemetry::RecordingTelemetry::records(&self) -> alloc::vec::Vec<kernel_core::telemetry::Record>
+impl core::clone::Clone for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::clone(&self) -> kernel_core::telemetry::RecordingTelemetry
+impl core::default::Default for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::default() -> kernel_core::telemetry::RecordingTelemetry
+impl core::fmt::Debug for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::record(&self, kernel_core::telemetry::Record)
+impl core::marker::Freeze for kernel_core::telemetry::RecordingTelemetry
+impl core::marker::Send for kernel_core::telemetry::RecordingTelemetry
+impl core::marker::Sync for kernel_core::telemetry::RecordingTelemetry
+impl core::marker::Unpin for kernel_core::telemetry::RecordingTelemetry
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::RecordingTelemetry
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::RecordingTelemetry
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::RecordingTelemetry
+pub struct kernel_core::RegisterError
+impl kernel_core::error::RegisterError
+pub fn kernel_core::error::RegisterError::bundle(&self) -> &'static str
+pub fn kernel_core::error::RegisterError::cause(&self) -> &kernel_core::error::BoxSource
+pub fn kernel_core::error::RegisterError::new(&'static str, kernel_core::error::BoxSource) -> Self
+impl core::error::Error for kernel_core::error::RegisterError
+pub fn kernel_core::error::RegisterError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::RegisterError
+pub fn kernel_core::error::RegisterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::RegisterError
+pub fn kernel_core::error::RegisterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::RegisterError
+impl core::marker::Send for kernel_core::error::RegisterError
+impl core::marker::Sync for kernel_core::error::RegisterError
+impl core::marker::Unpin for kernel_core::error::RegisterError
+impl core::marker::UnsafeUnpin for kernel_core::error::RegisterError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::RegisterError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::RegisterError
+pub struct kernel_core::RunError
+impl kernel_core::error::RunError
+pub fn kernel_core::error::RunError::abort_reason(&self) -> core::option::Option<kernel_core::error::AbortReason>
+pub fn kernel_core::error::RunError::cancelled(kernel_core::id::RunnableId) -> Self
+pub fn kernel_core::error::RunError::deadline_exceeded(kernel_core::id::RunnableId) -> Self
+pub fn kernel_core::error::RunError::failed(kernel_core::id::RunnableId, kernel_core::error::BoxSource) -> Self
+pub fn kernel_core::error::RunError::kind(&self) -> &kernel_core::error::RunErrorKind
+pub fn kernel_core::error::RunError::new(kernel_core::id::RunnableId, kernel_core::error::RunErrorKind) -> Self
+pub fn kernel_core::error::RunError::panicked(kernel_core::id::RunnableId, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kernel_core::error::RunError::runnable(&self) -> kernel_core::id::RunnableId
+impl core::error::Error for kernel_core::error::RunError
+pub fn kernel_core::error::RunError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::RunError
+pub fn kernel_core::error::RunError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::RunError
+pub fn kernel_core::error::RunError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::RunError
+impl core::marker::Send for kernel_core::error::RunError
+impl core::marker::Sync for kernel_core::error::RunError
+impl core::marker::Unpin for kernel_core::error::RunError
+impl core::marker::UnsafeUnpin for kernel_core::error::RunError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::RunError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::RunError
+pub struct kernel_core::RunnableDescriptor
+pub kernel_core::RunnableDescriptor::criticality: kernel_core::descriptor::Criticality
+pub kernel_core::RunnableDescriptor::drain_timeout: core::option::Option<core::time::Duration>
+pub kernel_core::RunnableDescriptor::restart: kernel_core::descriptor::RestartPolicy
+pub kernel_core::RunnableDescriptor::stop_timeout: core::option::Option<core::time::Duration>
+impl kernel_core::descriptor::RunnableDescriptor
+pub const fn kernel_core::descriptor::RunnableDescriptor::criticality(self, kernel_core::descriptor::Criticality) -> Self
+pub const fn kernel_core::descriptor::RunnableDescriptor::drain_timeout(self, core::time::Duration) -> Self
+pub const fn kernel_core::descriptor::RunnableDescriptor::new() -> Self
+pub const fn kernel_core::descriptor::RunnableDescriptor::restart(self, kernel_core::descriptor::RestartPolicy) -> Self
+pub const fn kernel_core::descriptor::RunnableDescriptor::stop_timeout(self, core::time::Duration) -> Self
+impl core::clone::Clone for kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_core::descriptor::RunnableDescriptor::clone(&self) -> kernel_core::descriptor::RunnableDescriptor
+impl core::clone::TrivialClone for kernel_core::descriptor::RunnableDescriptor
+impl core::cmp::PartialEq for kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_core::descriptor::RunnableDescriptor::eq(&self, &kernel_core::descriptor::RunnableDescriptor) -> bool
+impl core::default::Default for kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_core::descriptor::RunnableDescriptor::default() -> Self
+impl core::fmt::Debug for kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_core::descriptor::RunnableDescriptor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::Freeze for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::Send for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::Sync for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::Unpin for kernel_core::descriptor::RunnableDescriptor
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::RunnableDescriptor
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::RunnableDescriptor
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::RunnableDescriptor
+pub struct kernel_core::RunnableId
+impl kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::index(&self) -> u32
+pub fn kernel_core::id::RunnableId::name(&self) -> &'static str
+pub const fn kernel_core::id::RunnableId::new(&'static str, u32) -> Self
+impl core::clone::Clone for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::clone(&self) -> kernel_core::id::RunnableId
+impl core::clone::TrivialClone for kernel_core::id::RunnableId
+impl core::cmp::Eq for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::eq(&self, &kernel_core::id::RunnableId) -> bool
+impl core::fmt::Debug for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::id::RunnableId
+pub fn kernel_core::id::RunnableId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::id::RunnableId
+impl core::marker::StructuralPartialEq for kernel_core::id::RunnableId
+impl core::marker::Freeze for kernel_core::id::RunnableId
+impl core::marker::Send for kernel_core::id::RunnableId
+impl core::marker::Sync for kernel_core::id::RunnableId
+impl core::marker::Unpin for kernel_core::id::RunnableId
+impl core::marker::UnsafeUnpin for kernel_core::id::RunnableId
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::id::RunnableId
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::id::RunnableId
+pub struct kernel_core::Secret<T>(_)
+impl<T> kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::expose(&self) -> &T
+pub fn kernel_core::config::Secret<T>::into_inner(self) -> T
+pub fn kernel_core::config::Secret<T>::new(T) -> Self
+impl<T: core::clone::Clone> core::clone::Clone for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::clone(&self) -> kernel_core::config::Secret<T>
+impl<T: core::cmp::Eq> core::cmp::Eq for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::assert_fields_are_eq(&self)
+impl<T: core::cmp::Ord> core::cmp::Ord for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::cmp(&self, &kernel_core::config::Secret<T>) -> core::cmp::Ordering
+impl<T: core::cmp::PartialEq> core::cmp::PartialEq for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::eq(&self, &kernel_core::config::Secret<T>) -> bool
+impl<T: core::cmp::PartialEq> core::marker::StructuralPartialEq for kernel_core::config::Secret<T>
+impl<T: core::cmp::PartialOrd> core::cmp::PartialOrd for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::partial_cmp(&self, &kernel_core::config::Secret<T>) -> core::option::Option<core::cmp::Ordering>
+impl<T: core::default::Default> core::default::Default for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::default() -> kernel_core::config::Secret<T>
+impl<T: core::hash::Hash> core::hash::Hash for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<T: core::marker::Copy> core::marker::Copy for kernel_core::config::Secret<T>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T> core::convert::From<T> for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::from(T) -> Self
+impl<T> core::fmt::Debug for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::fmt::Display for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::marker::Freeze for kernel_core::config::Secret<T> where T: core::marker::Freeze
+impl<T> core::marker::Send for kernel_core::config::Secret<T> where T: core::marker::Send
+impl<T> core::marker::Sync for kernel_core::config::Secret<T> where T: core::marker::Sync
+impl<T> core::marker::Unpin for kernel_core::config::Secret<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for kernel_core::config::Secret<T> where T: core::marker::UnsafeUnpin
+impl<T> core::panic::unwind_safe::RefUnwindSafe for kernel_core::config::Secret<T> where T: core::panic::unwind_safe::RefUnwindSafe
+impl<T> core::panic::unwind_safe::UnwindSafe for kernel_core::config::Secret<T> where T: core::panic::unwind_safe::UnwindSafe
+pub struct kernel_core::ShutdownError
+impl kernel_core::error::ShutdownError
+pub fn kernel_core::error::ShutdownError::abort_reason(&self) -> core::option::Option<kernel_core::error::AbortReason>
+pub fn kernel_core::error::ShutdownError::deadline_exceeded(&'static str) -> Self
+pub fn kernel_core::error::ShutdownError::failed(&'static str, kernel_core::error::BoxSource) -> Self
+pub fn kernel_core::error::ShutdownError::kind(&self) -> &kernel_core::error::ShutdownErrorKind
+pub fn kernel_core::error::ShutdownError::new(&'static str, kernel_core::error::ShutdownErrorKind) -> Self
+pub fn kernel_core::error::ShutdownError::unit(&self) -> &'static str
+impl core::error::Error for kernel_core::error::ShutdownError
+pub fn kernel_core::error::ShutdownError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for kernel_core::error::ShutdownError
+pub fn kernel_core::error::ShutdownError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kernel_core::error::ShutdownError
+pub fn kernel_core::error::ShutdownError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_core::error::ShutdownError
+impl core::marker::Send for kernel_core::error::ShutdownError
+impl core::marker::Sync for kernel_core::error::ShutdownError
+impl core::marker::Unpin for kernel_core::error::ShutdownError
+impl core::marker::UnsafeUnpin for kernel_core::error::ShutdownError
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_core::error::ShutdownError
+impl !core::panic::unwind_safe::UnwindSafe for kernel_core::error::ShutdownError
+pub struct kernel_core::ShutdownPolicy
+pub kernel_core::ShutdownPolicy::drain: core::time::Duration
+pub kernel_core::ShutdownPolicy::stop: core::time::Duration
+impl kernel_core::descriptor::ShutdownPolicy
+pub const kernel_core::descriptor::ShutdownPolicy::DEFAULT: kernel_core::descriptor::ShutdownPolicy
+pub const fn kernel_core::descriptor::ShutdownPolicy::budget(&self, kernel_core::descriptor::Stage) -> core::option::Option<core::time::Duration>
+pub const fn kernel_core::descriptor::ShutdownPolicy::new(core::time::Duration, core::time::Duration) -> Self
+pub fn kernel_core::descriptor::ShutdownPolicy::total(&self) -> core::time::Duration
+impl core::clone::Clone for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::clone(&self) -> kernel_core::descriptor::ShutdownPolicy
+impl core::clone::TrivialClone for kernel_core::descriptor::ShutdownPolicy
+impl core::cmp::Eq for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::eq(&self, &kernel_core::descriptor::ShutdownPolicy) -> bool
+impl core::default::Default for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::default() -> Self
+impl core::fmt::Debug for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_core::descriptor::ShutdownPolicy
+pub fn kernel_core::descriptor::ShutdownPolicy::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::StructuralPartialEq for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::Freeze for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::Send for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::Sync for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::Unpin for kernel_core::descriptor::ShutdownPolicy
+impl core::marker::UnsafeUnpin for kernel_core::descriptor::ShutdownPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::descriptor::ShutdownPolicy
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::descriptor::ShutdownPolicy
+pub struct kernel_core::StderrTelemetry
+impl core::clone::Clone for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::clone(&self) -> kernel_core::telemetry::StderrTelemetry
+impl core::clone::TrivialClone for kernel_core::telemetry::StderrTelemetry
+impl core::cmp::Eq for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::eq(&self, &kernel_core::telemetry::StderrTelemetry) -> bool
+impl core::default::Default for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::default() -> kernel_core::telemetry::StderrTelemetry
+impl core::fmt::Debug for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_core::telemetry::StderrTelemetry
+impl core::marker::StructuralPartialEq for kernel_core::telemetry::StderrTelemetry
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::record(&self, kernel_core::telemetry::Record)
+impl core::marker::Freeze for kernel_core::telemetry::StderrTelemetry
+impl core::marker::Send for kernel_core::telemetry::StderrTelemetry
+impl core::marker::Sync for kernel_core::telemetry::StderrTelemetry
+impl core::marker::Unpin for kernel_core::telemetry::StderrTelemetry
+impl core::marker::UnsafeUnpin for kernel_core::telemetry::StderrTelemetry
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::telemetry::StderrTelemetry
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::telemetry::StderrTelemetry
+pub struct kernel_core::YieldNow
+impl core::fmt::Debug for kernel_core::future::YieldNow
+pub fn kernel_core::future::YieldNow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::future::future::Future for kernel_core::future::YieldNow
+pub type kernel_core::future::YieldNow::Output = ()
+pub fn kernel_core::future::YieldNow::poll(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>) -> core::task::poll::Poll<()>
+impl core::marker::Freeze for kernel_core::future::YieldNow
+impl core::marker::Send for kernel_core::future::YieldNow
+impl core::marker::Sync for kernel_core::future::YieldNow
+impl core::marker::Unpin for kernel_core::future::YieldNow
+impl core::marker::UnsafeUnpin for kernel_core::future::YieldNow
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_core::future::YieldNow
+impl core::panic::unwind_safe::UnwindSafe for kernel_core::future::YieldNow
+pub trait kernel_core::ConfigSource: core::marker::Send + core::marker::Sync + 'static
+pub fn kernel_core::ConfigSource::load(&self) -> core::result::Result<kernel_core::config::ConfigTree, kernel_core::error::ConfigError>
+pub fn kernel_core::ConfigSource::name(&self) -> &'static str
+pub trait kernel_core::Event: core::marker::Send + core::marker::Sync + 'static
+pub const kernel_core::Event::NAME: &'static str
+pub trait kernel_core::Extension: core::marker::Send + core::marker::Sync + 'static
+pub trait kernel_core::FromConfig: core::marker::Sized
+pub fn kernel_core::FromConfig::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for alloc::string::String
+pub fn alloc::string::String::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for bool
+pub fn bool::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for core::time::Duration
+pub fn core::time::Duration::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for f32
+pub fn f32::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for f64
+pub fn f64::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for i16
+pub fn i16::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for i32
+pub fn i32::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for i64
+pub fn i64::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for i8
+pub fn i8::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for isize
+pub fn isize::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for kernel_core::config::ConfigNode
+pub fn kernel_core::config::ConfigNode::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for u16
+pub fn u16::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for u32
+pub fn u32::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for u64
+pub fn u64::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for u8
+pub fn u8::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl kernel_core::config::FromConfig for usize
+pub fn usize::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for alloc::collections::btree::map::BTreeMap<alloc::string::String, T>
+pub fn alloc::collections::btree::map::BTreeMap<alloc::string::String, T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for alloc::vec::Vec<T>
+pub fn alloc::vec::Vec<T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for core::option::Option<T>
+pub fn core::option::Option<T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+impl<T: kernel_core::config::FromConfig> kernel_core::config::FromConfig for kernel_core::config::Secret<T>
+pub fn kernel_core::config::Secret<T>::from_config(&kernel_core::config::ConfigNode) -> core::result::Result<Self, kernel_core::error::ConfigError>
+pub trait kernel_core::HealthProbe: kernel_core::extension::Extension
+pub fn kernel_core::HealthProbe::check<'a>(&'a self) -> kernel_core::future::BoxFuture<'a, kernel_core::health::Health>
+pub fn kernel_core::HealthProbe::name(&self) -> &'static str
+pub trait kernel_core::Telemetry: core::marker::Send + core::marker::Sync + 'static
+pub fn kernel_core::Telemetry::record(&self, kernel_core::telemetry::Record)
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::NoopTelemetry
+pub fn kernel_core::telemetry::NoopTelemetry::record(&self, kernel_core::telemetry::Record)
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::RecordingTelemetry
+pub fn kernel_core::telemetry::RecordingTelemetry::record(&self, kernel_core::telemetry::Record)
+impl kernel_core::telemetry::Telemetry for kernel_core::telemetry::StderrTelemetry
+pub fn kernel_core::telemetry::StderrTelemetry::record(&self, kernel_core::telemetry::Record)
+impl<T: kernel_core::telemetry::Telemetry + ?core::marker::Sized> kernel_core::telemetry::Telemetry for alloc::sync::Arc<T>
+pub fn alloc::sync::Arc<T>::record(&self, kernel_core::telemetry::Record)
+pub fn kernel_core::yield_now() -> kernel_core::future::YieldNow
+pub type kernel_core::BoxFuture<'a, T> = core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = T> + core::marker::Send + 'a)>>
+pub type kernel_core::BoxSource = alloc::boxed::Box<(dyn core::error::Error + core::marker::Send + core::marker::Sync + 'static)>

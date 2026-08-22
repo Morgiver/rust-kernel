@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+# No crates.io release is planned. The flag is the guard: a stated intention
+# nothing enforces is not one. One line to undo if that ever changes.
+publish = false
 
 [dependencies]
 kernel-core = { workspace = true }

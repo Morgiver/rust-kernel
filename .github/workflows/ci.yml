@@ -159,3 +159,38 @@ jobs:
       # entry in deny.toml all stop the build.
       - name: Advisories, licences, bans, sources
         run: cargo deny --all-features check --deny warnings
+
+  public-api:
+    name: public surface matches the baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Both pins are READ FROM the guard, never repeated here — same reason
+      # the MSRV job reads Cargo.toml: a version written in two places drifts,
+      # and a baseline diffed under the wrong nightly reports the compiler
+      # rather than the code.
+      - name: Read the pinned toolchain and tool version
+        id: pins
+        run: |
+          echo "toolchain=$(./ci/check-public-api.sh --print-toolchain)" >> "$GITHUB_OUTPUT"
+          echo "tool=$(./ci/check-public-api.sh --print-tool-version)" >> "$GITHUB_OUTPUT"
+      - name: Install stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      # rustdoc's JSON output is nightly-only. `--profile minimal` because the
+      # only thing wanted from this toolchain is rustdoc.
+      - name: Install the pinned nightly
+        run: rustup toolchain install "${{ steps.pins.outputs.toolchain }}" --profile minimal --no-self-update
+      # Building the tool from source costs minutes. The binary is cached on the
+      # pinned version, so only a version bump pays that cost; every other run
+      # restores it and the install step is a no-op.
+      - name: Cache cargo-public-api
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-public-api
+          key: cargo-public-api-${{ runner.os }}-${{ steps.pins.outputs.tool }}
+      - name: Install cargo-public-api
+        run: command -v cargo-public-api >/dev/null || cargo install cargo-public-api --locked --version "${{ steps.pins.outputs.tool }}"
+      - name: The public surface still matches api/
+        run: ./ci/check-public-api.sh

@@ -1176,6 +1176,22 @@ mod tests {
         assert!(matches!(error.kind(), ConfigErrorKind::TypeMismatch { .. }));
     }
 
+    /// The other two wrappers keep the same pair: who failed, and the failure
+    /// they carry unflattened.
+    #[test]
+    fn build_and_component_keep_the_cause() {
+        let build = BuildError::new("dyn Sink", boxed("no socket"));
+        assert_eq!(build.contract(), "dyn Sink");
+        assert_eq!(build.cause().to_string(), "no socket");
+        assert!(build.to_string().contains("no socket"));
+
+        let id = ComponentId::new("alpha", 0);
+        let component = ComponentError::new(id, boxed("no socket"));
+        assert_eq!(component.component(), id);
+        assert_eq!(component.cause().to_string(), "no socket");
+        assert!(component.source().is_some());
+    }
+
     #[test]
     fn wraps_foreign_source() {
         let error = RegisterError::new("alpha", boxed("disk on fire"));
@@ -1378,6 +1394,20 @@ mod tests {
         );
         assert_eq!(RunError::panicked(alpha, "boom").abort_reason(), None);
         assert_eq!(RunError::failed(alpha, boxed("disk")).abort_reason(), None);
+    }
+
+    /// The kind is what tells a failed stop from one that ran out of time,
+    /// and `new` is the general form the two constructors go through.
+    #[test]
+    fn shutdown_error_reads_kind() {
+        let failed = ShutdownError::new("alpha", ShutdownErrorKind::Failed(boxed("disk")));
+        assert_eq!(failed.unit(), "alpha");
+        assert!(matches!(failed.kind(), ShutdownErrorKind::Failed(_)));
+        assert_eq!(failed.kind().to_string(), "disk");
+
+        let late = ShutdownError::deadline_exceeded("beta");
+        assert!(matches!(late.kind(), ShutdownErrorKind::DeadlineExceeded));
+        assert_eq!(late.kind().to_string(), "deadline exceeded");
     }
 
     #[test]

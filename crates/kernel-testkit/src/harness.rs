@@ -1186,6 +1186,21 @@ mod tests {
         assert_eq!(registered.listeners::<Running>(), 1);
     }
 
+    /// What phase three wrote is readable off the pass itself: the sink and
+    /// the records it holds, without an application around them.
+    #[tokio::test]
+    async fn registered_exposes_its_sink() {
+        let registered = Registered::of(Twice).await.expect("registered");
+
+        assert!(registered.telemetry().contains("kernel.resolved"));
+        assert!(
+            registered
+                .records()
+                .iter()
+                .any(|record| record.event == "kernel.resolved")
+        );
+    }
+
     /// The named binding that claims the default position is the one the
     /// unnamed resolution returns, and `defaults_to` says so.
     #[tokio::test]

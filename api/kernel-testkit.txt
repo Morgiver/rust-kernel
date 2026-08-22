@@ -1,0 +1,448 @@
+pub mod kernel_testkit
+pub use kernel_testkit::FnBundle
+pub mod kernel_testkit::doubles
+pub enum kernel_testkit::doubles::Call
+pub kernel_testkit::doubles::Call::Boot
+pub kernel_testkit::doubles::Call::Shutdown
+impl core::clone::Clone for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::clone(&self) -> kernel_testkit::doubles::Call
+impl core::clone::TrivialClone for kernel_testkit::doubles::Call
+impl core::cmp::Eq for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::eq(&self, &kernel_testkit::doubles::Call) -> bool
+impl core::fmt::Debug for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_testkit::doubles::Call
+impl core::marker::StructuralPartialEq for kernel_testkit::doubles::Call
+impl core::marker::Freeze for kernel_testkit::doubles::Call
+impl core::marker::Send for kernel_testkit::doubles::Call
+impl core::marker::Sync for kernel_testkit::doubles::Call
+impl core::marker::Unpin for kernel_testkit::doubles::Call
+impl core::marker::UnsafeUnpin for kernel_testkit::doubles::Call
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::doubles::Call
+impl core::panic::unwind_safe::UnwindSafe for kernel_testkit::doubles::Call
+pub struct kernel_testkit::doubles::LifecycleLog
+impl kernel_testkit::doubles::LifecycleLog
+pub fn kernel_testkit::doubles::LifecycleLog::boots(&self) -> usize
+pub fn kernel_testkit::doubles::LifecycleLog::calls(&self) -> alloc::vec::Vec<kernel_testkit::doubles::Call>
+pub fn kernel_testkit::doubles::LifecycleLog::new() -> Self
+pub fn kernel_testkit::doubles::LifecycleLog::stops(&self) -> usize
+impl core::default::Default for kernel_testkit::doubles::LifecycleLog
+pub fn kernel_testkit::doubles::LifecycleLog::default() -> kernel_testkit::doubles::LifecycleLog
+impl core::fmt::Debug for kernel_testkit::doubles::LifecycleLog
+pub fn kernel_testkit::doubles::LifecycleLog::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl kernel::component::Component for kernel_testkit::doubles::LifecycleLog
+pub fn kernel_testkit::doubles::LifecycleLog::boot<'a>(&'a self, &'a kernel::component::BootContext<'a>) -> kernel_core::future::BoxFuture<'a, core::result::Result<(), kernel_core::error::ComponentError>>
+pub fn kernel_testkit::doubles::LifecycleLog::descriptor(&self) -> kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_testkit::doubles::LifecycleLog::name() -> &'static str
+pub fn kernel_testkit::doubles::LifecycleLog::shutdown<'a>(&'a self, &'a kernel::component::ShutdownContext<'a>) -> kernel_core::future::BoxFuture<'a, core::result::Result<(), kernel_core::error::ComponentError>>
+impl core::marker::Freeze for kernel_testkit::doubles::LifecycleLog
+impl core::marker::Send for kernel_testkit::doubles::LifecycleLog
+impl core::marker::Sync for kernel_testkit::doubles::LifecycleLog
+impl core::marker::Unpin for kernel_testkit::doubles::LifecycleLog
+impl core::marker::UnsafeUnpin for kernel_testkit::doubles::LifecycleLog
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::doubles::LifecycleLog
+impl core::panic::unwind_safe::UnwindSafe for kernel_testkit::doubles::LifecycleLog
+pub struct kernel_testkit::doubles::Parking
+impl core::clone::Clone for kernel_testkit::doubles::Parking
+pub fn kernel_testkit::doubles::Parking::clone(&self) -> kernel_testkit::doubles::Parking
+impl core::clone::TrivialClone for kernel_testkit::doubles::Parking
+impl core::default::Default for kernel_testkit::doubles::Parking
+pub fn kernel_testkit::doubles::Parking::default() -> kernel_testkit::doubles::Parking
+impl core::fmt::Debug for kernel_testkit::doubles::Parking
+pub fn kernel_testkit::doubles::Parking::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_testkit::doubles::Parking
+impl kernel::runnable::Runnable for kernel_testkit::doubles::Parking
+pub fn kernel_testkit::doubles::Parking::descriptor(&self) -> kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_testkit::doubles::Parking::name() -> &'static str
+pub fn kernel_testkit::doubles::Parking::run(alloc::sync::Arc<Self>, kernel::runnable::RunContext) -> kernel_core::future::BoxFuture<'static, core::result::Result<(), kernel_core::error::RunError>>
+impl core::marker::Freeze for kernel_testkit::doubles::Parking
+impl core::marker::Send for kernel_testkit::doubles::Parking
+impl core::marker::Sync for kernel_testkit::doubles::Parking
+impl core::marker::Unpin for kernel_testkit::doubles::Parking
+impl core::marker::UnsafeUnpin for kernel_testkit::doubles::Parking
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::doubles::Parking
+impl core::panic::unwind_safe::UnwindSafe for kernel_testkit::doubles::Parking
+pub struct kernel_testkit::doubles::Recorder<T>
+impl<T: core::clone::Clone> kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::items(&self) -> alloc::vec::Vec<T>
+impl<T> kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::clear(&self)
+pub fn kernel_testkit::doubles::Recorder<T>::is_empty(&self) -> bool
+pub fn kernel_testkit::doubles::Recorder<T>::len(&self) -> usize
+pub fn kernel_testkit::doubles::Recorder<T>::new() -> Self
+pub fn kernel_testkit::doubles::Recorder<T>::record(&self, T)
+pub fn kernel_testkit::doubles::Recorder<T>::take(&self) -> alloc::vec::Vec<T>
+impl<T> core::clone::Clone for kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::clone(&self) -> Self
+impl<T> core::default::Default for kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::default() -> Self
+impl<T> core::fmt::Debug for kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::marker::Freeze for kernel_testkit::doubles::Recorder<T>
+impl<T> core::marker::Send for kernel_testkit::doubles::Recorder<T> where T: core::marker::Send
+impl<T> core::marker::Sync for kernel_testkit::doubles::Recorder<T> where T: core::marker::Send
+impl<T> core::marker::Unpin for kernel_testkit::doubles::Recorder<T>
+impl<T> core::marker::UnsafeUnpin for kernel_testkit::doubles::Recorder<T>
+impl<T> core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::doubles::Recorder<T>
+impl<T> core::panic::unwind_safe::UnwindSafe for kernel_testkit::doubles::Recorder<T>
+pub mod kernel_testkit::harness
+pub struct kernel_testkit::harness::Ended
+impl kernel_testkit::harness::Ended
+pub fn kernel_testkit::harness::Ended::contains(&self, &kernel_testkit::harness::RecordMatch) -> bool
+pub fn kernel_testkit::harness::Ended::count(&self, &kernel_testkit::harness::RecordMatch) -> usize
+pub fn kernel_testkit::harness::Ended::find(&self, &kernel_testkit::harness::RecordMatch) -> core::option::Option<kernel_core::telemetry::Record>
+pub fn kernel_testkit::harness::Ended::into_outcome(self) -> kernel_core::error::Outcome
+pub fn kernel_testkit::harness::Ended::is_success(&self) -> bool
+pub fn kernel_testkit::harness::Ended::outcome(&self) -> &kernel_core::error::Outcome
+pub fn kernel_testkit::harness::Ended::records(&self) -> alloc::vec::Vec<kernel_core::telemetry::Record>
+pub fn kernel_testkit::harness::Ended::telemetry(&self) -> alloc::sync::Arc<kernel_core::telemetry::RecordingTelemetry>
+impl core::fmt::Debug for kernel_testkit::harness::Ended
+pub fn kernel_testkit::harness::Ended::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_testkit::harness::Ended
+impl core::marker::Send for kernel_testkit::harness::Ended
+impl core::marker::Sync for kernel_testkit::harness::Ended
+impl core::marker::Unpin for kernel_testkit::harness::Ended
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::Ended
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::Ended
+impl !core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::Ended
+pub struct kernel_testkit::harness::RecordMatch
+impl kernel_testkit::harness::RecordMatch
+pub fn kernel_testkit::harness::RecordMatch::count(&self, &[kernel_core::telemetry::Record]) -> usize
+pub fn kernel_testkit::harness::RecordMatch::event(&str) -> Self
+pub fn kernel_testkit::harness::RecordMatch::field(&str, impl core::convert::Into<kernel_core::telemetry::FieldValue>) -> Self
+pub fn kernel_testkit::harness::RecordMatch::first<'a>(&self, &'a [kernel_core::telemetry::Record]) -> core::option::Option<&'a kernel_core::telemetry::Record>
+pub fn kernel_testkit::harness::RecordMatch::matches(&self, &kernel_core::telemetry::Record) -> bool
+pub fn kernel_testkit::harness::RecordMatch::with(self, &str, impl core::convert::Into<kernel_core::telemetry::FieldValue>) -> Self
+impl core::clone::Clone for kernel_testkit::harness::RecordMatch
+pub fn kernel_testkit::harness::RecordMatch::clone(&self) -> kernel_testkit::harness::RecordMatch
+impl core::fmt::Debug for kernel_testkit::harness::RecordMatch
+pub fn kernel_testkit::harness::RecordMatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_testkit::harness::RecordMatch
+impl core::marker::Send for kernel_testkit::harness::RecordMatch
+impl core::marker::Sync for kernel_testkit::harness::RecordMatch
+impl core::marker::Unpin for kernel_testkit::harness::RecordMatch
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::RecordMatch
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::RecordMatch
+impl core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::RecordMatch
+pub struct kernel_testkit::harness::Registered
+impl kernel_testkit::harness::Registered
+pub async fn kernel_testkit::harness::Registered::bindings<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(&self) -> usize
+pub fn kernel_testkit::harness::Registered::components(&self) -> usize
+pub fn kernel_testkit::harness::Registered::container(&self) -> &kernel::container::Container
+pub async fn kernel_testkit::harness::Registered::defaults_to<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(&self, &'static str) -> bool
+pub fn kernel_testkit::harness::Registered::dispatcher(&self) -> &alloc::sync::Arc<kernel::dispatcher::EventDispatcher>
+pub async fn kernel_testkit::harness::Registered::get<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(&self) -> core::result::Result<alloc::sync::Arc<C>, kernel_core::error::ContainerError>
+pub async fn kernel_testkit::harness::Registered::get_named<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(&self, &'static str) -> core::result::Result<alloc::sync::Arc<C>, kernel_core::error::ContainerError>
+pub fn kernel_testkit::harness::Registered::into_container(self) -> kernel::container::Container
+pub fn kernel_testkit::harness::Registered::listeners<E: kernel_core::event::Event>(&self) -> usize
+pub async fn kernel_testkit::harness::Registered::of(impl kernel::bundle::Bundle) -> core::result::Result<Self, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::Registered::records(&self) -> alloc::vec::Vec<kernel_core::telemetry::Record>
+pub fn kernel_testkit::harness::Registered::runnables(&self) -> usize
+pub fn kernel_testkit::harness::Registered::telemetry(&self) -> alloc::sync::Arc<kernel_core::telemetry::RecordingTelemetry>
+impl core::fmt::Debug for kernel_testkit::harness::Registered
+pub fn kernel_testkit::harness::Registered::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_testkit::harness::Registered
+impl core::marker::Send for kernel_testkit::harness::Registered
+impl core::marker::Sync for kernel_testkit::harness::Registered
+impl core::marker::Unpin for kernel_testkit::harness::Registered
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::Registered
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::Registered
+impl !core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::Registered
+pub struct kernel_testkit::harness::TestBuilder
+impl kernel_testkit::harness::TestBuilder
+pub async fn kernel_testkit::harness::TestBuilder::build(self) -> core::result::Result<kernel::kernel::Kernel, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::TestBuilder::bundle(self, impl kernel::bundle::Bundle) -> Self
+pub fn kernel_testkit::harness::TestBuilder::config_source(self, impl kernel_core::config::ConfigSource) -> Self
+pub async fn kernel_testkit::harness::TestBuilder::container(self) -> core::result::Result<kernel::container::Container, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::TestBuilder::keep_running(self) -> Self
+pub fn kernel_testkit::harness::TestBuilder::new() -> Self
+pub async fn kernel_testkit::harness::TestBuilder::registered(self) -> core::result::Result<kernel_testkit::harness::Registered, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::TestBuilder::shutdown_policy(self, kernel_core::descriptor::ShutdownPolicy) -> Self
+pub async fn kernel_testkit::harness::TestBuilder::start(self) -> core::result::Result<kernel_testkit::harness::TestHarness, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::TestBuilder::substitute<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(self, alloc::sync::Arc<C>) -> Self
+pub fn kernel_testkit::harness::TestBuilder::substitute_component<T: kernel::component::Component>(self, alloc::sync::Arc<T>) -> Self
+pub fn kernel_testkit::harness::TestBuilder::substitute_named<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(self, &'static str, alloc::sync::Arc<C>) -> Self
+pub fn kernel_testkit::harness::TestBuilder::substitute_runnable<T: kernel::runnable::Runnable>(self, alloc::sync::Arc<T>) -> Self
+pub fn kernel_testkit::harness::TestBuilder::telemetry(&self) -> alloc::sync::Arc<kernel_core::telemetry::RecordingTelemetry>
+impl core::default::Default for kernel_testkit::harness::TestBuilder
+pub fn kernel_testkit::harness::TestBuilder::default() -> Self
+impl core::marker::Freeze for kernel_testkit::harness::TestBuilder
+impl core::marker::Send for kernel_testkit::harness::TestBuilder
+impl !core::marker::Sync for kernel_testkit::harness::TestBuilder
+impl core::marker::Unpin for kernel_testkit::harness::TestBuilder
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::TestBuilder
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::TestBuilder
+impl !core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::TestBuilder
+pub struct kernel_testkit::harness::TestHarness
+impl kernel_testkit::harness::TestHarness
+pub fn kernel_testkit::harness::TestHarness::container(&self) -> &kernel::container::Container
+pub fn kernel_testkit::harness::TestHarness::count(&self, &kernel_testkit::harness::RecordMatch) -> usize
+pub fn kernel_testkit::harness::TestHarness::handle(&self) -> kernel::shutdown::KernelHandle
+pub fn kernel_testkit::harness::TestHarness::is_running(&self) -> bool
+pub fn kernel_testkit::harness::TestHarness::records(&self) -> alloc::vec::Vec<kernel_core::telemetry::Record>
+pub async fn kernel_testkit::harness::TestHarness::stop(self) -> kernel_core::error::Outcome
+pub async fn kernel_testkit::harness::TestHarness::stopped(self) -> kernel_testkit::harness::Ended
+pub fn kernel_testkit::harness::TestHarness::telemetry(&self) -> alloc::sync::Arc<kernel_core::telemetry::RecordingTelemetry>
+pub async fn kernel_testkit::harness::TestHarness::wait(self) -> kernel_core::error::Outcome
+pub async fn kernel_testkit::harness::TestHarness::wait_for(&self, &kernel_testkit::harness::RecordMatch, usize) -> usize
+pub async fn kernel_testkit::harness::TestHarness::wait_for_record(&self, &str, usize) -> usize
+pub async fn kernel_testkit::harness::TestHarness::waited(self) -> kernel_testkit::harness::Ended
+impl core::fmt::Debug for kernel_testkit::harness::TestHarness
+pub fn kernel_testkit::harness::TestHarness::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_testkit::harness::TestHarness
+impl core::marker::Send for kernel_testkit::harness::TestHarness
+impl core::marker::Sync for kernel_testkit::harness::TestHarness
+impl core::marker::Unpin for kernel_testkit::harness::TestHarness
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::TestHarness
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::TestHarness
+impl !core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::TestHarness
+pub async fn kernel_testkit::harness::container<F>(F) -> core::result::Result<kernel::container::Container, kernel_core::error::KernelError> where F: core::ops::function::Fn(&mut kernel::registry::Registry) -> core::result::Result<(), kernel_core::error::RegisterError> + core::marker::Send + core::marker::Sync + 'static
+pub mod kernel_testkit::log
+pub struct kernel_testkit::log::EventLog<E: kernel_core::event::Event>
+impl<E: kernel_core::event::Event + core::clone::Clone> kernel_testkit::log::EventLog<E>
+pub fn kernel_testkit::log::EventLog<E>::clear(&self)
+pub fn kernel_testkit::log::EventLog<E>::events(&self) -> alloc::vec::Vec<E>
+pub fn kernel_testkit::log::EventLog<E>::is_empty(&self) -> bool
+pub fn kernel_testkit::log::EventLog<E>::len(&self) -> usize
+pub fn kernel_testkit::log::EventLog<E>::new() -> Self
+impl<E: kernel_core::event::Event + core::clone::Clone> core::default::Default for kernel_testkit::log::EventLog<E>
+pub fn kernel_testkit::log::EventLog<E>::default() -> Self
+impl<E: kernel_core::event::Event + core::clone::Clone> kernel::dispatcher::Listener<E> for kernel_testkit::log::EventLog<E>
+pub fn kernel_testkit::log::EventLog<E>::on_event<'a>(&'a self, &'a mut E, &'a kernel::dispatcher::ListenerContext<'a>) -> kernel_core::future::BoxFuture<'a, core::result::Result<kernel_core::event::Flow, kernel_core::error::ListenerError>>
+impl<E: kernel_core::event::Event> core::clone::Clone for kernel_testkit::log::EventLog<E>
+pub fn kernel_testkit::log::EventLog<E>::clone(&self) -> Self
+impl<E> core::marker::Freeze for kernel_testkit::log::EventLog<E>
+impl<E> core::marker::Send for kernel_testkit::log::EventLog<E>
+impl<E> core::marker::Sync for kernel_testkit::log::EventLog<E>
+impl<E> core::marker::Unpin for kernel_testkit::log::EventLog<E>
+impl<E> core::marker::UnsafeUnpin for kernel_testkit::log::EventLog<E>
+impl<E> core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::log::EventLog<E>
+impl<E> core::panic::unwind_safe::UnwindSafe for kernel_testkit::log::EventLog<E>
+pub mod kernel_testkit::missing
+pub fn kernel_testkit::missing::missing_contracts(impl kernel::bundle::Bundle) -> core::result::Result<alloc::vec::Vec<kernel_core::id::ContractRef>, kernel_core::error::KernelError>
+pub fn kernel_testkit::missing::missing_contracts_with<S: kernel_core::config::ConfigSource>(impl kernel::bundle::Bundle, impl core::iter::traits::collect::IntoIterator<Item = S>) -> core::result::Result<alloc::vec::Vec<kernel_core::id::ContractRef>, kernel_core::error::KernelError>
+pub enum kernel_testkit::Call
+pub kernel_testkit::Call::Boot
+pub kernel_testkit::Call::Shutdown
+impl core::clone::Clone for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::clone(&self) -> kernel_testkit::doubles::Call
+impl core::clone::TrivialClone for kernel_testkit::doubles::Call
+impl core::cmp::Eq for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::eq(&self, &kernel_testkit::doubles::Call) -> bool
+impl core::fmt::Debug for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kernel_testkit::doubles::Call
+pub fn kernel_testkit::doubles::Call::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kernel_testkit::doubles::Call
+impl core::marker::StructuralPartialEq for kernel_testkit::doubles::Call
+impl core::marker::Freeze for kernel_testkit::doubles::Call
+impl core::marker::Send for kernel_testkit::doubles::Call
+impl core::marker::Sync for kernel_testkit::doubles::Call
+impl core::marker::Unpin for kernel_testkit::doubles::Call
+impl core::marker::UnsafeUnpin for kernel_testkit::doubles::Call
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::doubles::Call
+impl core::panic::unwind_safe::UnwindSafe for kernel_testkit::doubles::Call
+pub struct kernel_testkit::Ended
+impl kernel_testkit::harness::Ended
+pub fn kernel_testkit::harness::Ended::contains(&self, &kernel_testkit::harness::RecordMatch) -> bool
+pub fn kernel_testkit::harness::Ended::count(&self, &kernel_testkit::harness::RecordMatch) -> usize
+pub fn kernel_testkit::harness::Ended::find(&self, &kernel_testkit::harness::RecordMatch) -> core::option::Option<kernel_core::telemetry::Record>
+pub fn kernel_testkit::harness::Ended::into_outcome(self) -> kernel_core::error::Outcome
+pub fn kernel_testkit::harness::Ended::is_success(&self) -> bool
+pub fn kernel_testkit::harness::Ended::outcome(&self) -> &kernel_core::error::Outcome
+pub fn kernel_testkit::harness::Ended::records(&self) -> alloc::vec::Vec<kernel_core::telemetry::Record>
+pub fn kernel_testkit::harness::Ended::telemetry(&self) -> alloc::sync::Arc<kernel_core::telemetry::RecordingTelemetry>
+impl core::fmt::Debug for kernel_testkit::harness::Ended
+pub fn kernel_testkit::harness::Ended::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_testkit::harness::Ended
+impl core::marker::Send for kernel_testkit::harness::Ended
+impl core::marker::Sync for kernel_testkit::harness::Ended
+impl core::marker::Unpin for kernel_testkit::harness::Ended
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::Ended
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::Ended
+impl !core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::Ended
+pub struct kernel_testkit::EventLog<E: kernel_core::event::Event>
+impl<E: kernel_core::event::Event + core::clone::Clone> kernel_testkit::log::EventLog<E>
+pub fn kernel_testkit::log::EventLog<E>::clear(&self)
+pub fn kernel_testkit::log::EventLog<E>::events(&self) -> alloc::vec::Vec<E>
+pub fn kernel_testkit::log::EventLog<E>::is_empty(&self) -> bool
+pub fn kernel_testkit::log::EventLog<E>::len(&self) -> usize
+pub fn kernel_testkit::log::EventLog<E>::new() -> Self
+impl<E: kernel_core::event::Event + core::clone::Clone> core::default::Default for kernel_testkit::log::EventLog<E>
+pub fn kernel_testkit::log::EventLog<E>::default() -> Self
+impl<E: kernel_core::event::Event + core::clone::Clone> kernel::dispatcher::Listener<E> for kernel_testkit::log::EventLog<E>
+pub fn kernel_testkit::log::EventLog<E>::on_event<'a>(&'a self, &'a mut E, &'a kernel::dispatcher::ListenerContext<'a>) -> kernel_core::future::BoxFuture<'a, core::result::Result<kernel_core::event::Flow, kernel_core::error::ListenerError>>
+impl<E: kernel_core::event::Event> core::clone::Clone for kernel_testkit::log::EventLog<E>
+pub fn kernel_testkit::log::EventLog<E>::clone(&self) -> Self
+impl<E> core::marker::Freeze for kernel_testkit::log::EventLog<E>
+impl<E> core::marker::Send for kernel_testkit::log::EventLog<E>
+impl<E> core::marker::Sync for kernel_testkit::log::EventLog<E>
+impl<E> core::marker::Unpin for kernel_testkit::log::EventLog<E>
+impl<E> core::marker::UnsafeUnpin for kernel_testkit::log::EventLog<E>
+impl<E> core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::log::EventLog<E>
+impl<E> core::panic::unwind_safe::UnwindSafe for kernel_testkit::log::EventLog<E>
+pub struct kernel_testkit::LifecycleLog
+impl kernel_testkit::doubles::LifecycleLog
+pub fn kernel_testkit::doubles::LifecycleLog::boots(&self) -> usize
+pub fn kernel_testkit::doubles::LifecycleLog::calls(&self) -> alloc::vec::Vec<kernel_testkit::doubles::Call>
+pub fn kernel_testkit::doubles::LifecycleLog::new() -> Self
+pub fn kernel_testkit::doubles::LifecycleLog::stops(&self) -> usize
+impl core::default::Default for kernel_testkit::doubles::LifecycleLog
+pub fn kernel_testkit::doubles::LifecycleLog::default() -> kernel_testkit::doubles::LifecycleLog
+impl core::fmt::Debug for kernel_testkit::doubles::LifecycleLog
+pub fn kernel_testkit::doubles::LifecycleLog::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl kernel::component::Component for kernel_testkit::doubles::LifecycleLog
+pub fn kernel_testkit::doubles::LifecycleLog::boot<'a>(&'a self, &'a kernel::component::BootContext<'a>) -> kernel_core::future::BoxFuture<'a, core::result::Result<(), kernel_core::error::ComponentError>>
+pub fn kernel_testkit::doubles::LifecycleLog::descriptor(&self) -> kernel_core::descriptor::ComponentDescriptor
+pub fn kernel_testkit::doubles::LifecycleLog::name() -> &'static str
+pub fn kernel_testkit::doubles::LifecycleLog::shutdown<'a>(&'a self, &'a kernel::component::ShutdownContext<'a>) -> kernel_core::future::BoxFuture<'a, core::result::Result<(), kernel_core::error::ComponentError>>
+impl core::marker::Freeze for kernel_testkit::doubles::LifecycleLog
+impl core::marker::Send for kernel_testkit::doubles::LifecycleLog
+impl core::marker::Sync for kernel_testkit::doubles::LifecycleLog
+impl core::marker::Unpin for kernel_testkit::doubles::LifecycleLog
+impl core::marker::UnsafeUnpin for kernel_testkit::doubles::LifecycleLog
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::doubles::LifecycleLog
+impl core::panic::unwind_safe::UnwindSafe for kernel_testkit::doubles::LifecycleLog
+pub struct kernel_testkit::Parking
+impl core::clone::Clone for kernel_testkit::doubles::Parking
+pub fn kernel_testkit::doubles::Parking::clone(&self) -> kernel_testkit::doubles::Parking
+impl core::clone::TrivialClone for kernel_testkit::doubles::Parking
+impl core::default::Default for kernel_testkit::doubles::Parking
+pub fn kernel_testkit::doubles::Parking::default() -> kernel_testkit::doubles::Parking
+impl core::fmt::Debug for kernel_testkit::doubles::Parking
+pub fn kernel_testkit::doubles::Parking::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kernel_testkit::doubles::Parking
+impl kernel::runnable::Runnable for kernel_testkit::doubles::Parking
+pub fn kernel_testkit::doubles::Parking::descriptor(&self) -> kernel_core::descriptor::RunnableDescriptor
+pub fn kernel_testkit::doubles::Parking::name() -> &'static str
+pub fn kernel_testkit::doubles::Parking::run(alloc::sync::Arc<Self>, kernel::runnable::RunContext) -> kernel_core::future::BoxFuture<'static, core::result::Result<(), kernel_core::error::RunError>>
+impl core::marker::Freeze for kernel_testkit::doubles::Parking
+impl core::marker::Send for kernel_testkit::doubles::Parking
+impl core::marker::Sync for kernel_testkit::doubles::Parking
+impl core::marker::Unpin for kernel_testkit::doubles::Parking
+impl core::marker::UnsafeUnpin for kernel_testkit::doubles::Parking
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::doubles::Parking
+impl core::panic::unwind_safe::UnwindSafe for kernel_testkit::doubles::Parking
+pub struct kernel_testkit::RecordMatch
+impl kernel_testkit::harness::RecordMatch
+pub fn kernel_testkit::harness::RecordMatch::count(&self, &[kernel_core::telemetry::Record]) -> usize
+pub fn kernel_testkit::harness::RecordMatch::event(&str) -> Self
+pub fn kernel_testkit::harness::RecordMatch::field(&str, impl core::convert::Into<kernel_core::telemetry::FieldValue>) -> Self
+pub fn kernel_testkit::harness::RecordMatch::first<'a>(&self, &'a [kernel_core::telemetry::Record]) -> core::option::Option<&'a kernel_core::telemetry::Record>
+pub fn kernel_testkit::harness::RecordMatch::matches(&self, &kernel_core::telemetry::Record) -> bool
+pub fn kernel_testkit::harness::RecordMatch::with(self, &str, impl core::convert::Into<kernel_core::telemetry::FieldValue>) -> Self
+impl core::clone::Clone for kernel_testkit::harness::RecordMatch
+pub fn kernel_testkit::harness::RecordMatch::clone(&self) -> kernel_testkit::harness::RecordMatch
+impl core::fmt::Debug for kernel_testkit::harness::RecordMatch
+pub fn kernel_testkit::harness::RecordMatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_testkit::harness::RecordMatch
+impl core::marker::Send for kernel_testkit::harness::RecordMatch
+impl core::marker::Sync for kernel_testkit::harness::RecordMatch
+impl core::marker::Unpin for kernel_testkit::harness::RecordMatch
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::RecordMatch
+impl core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::RecordMatch
+impl core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::RecordMatch
+pub struct kernel_testkit::Recorder<T>
+impl<T: core::clone::Clone> kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::items(&self) -> alloc::vec::Vec<T>
+impl<T> kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::clear(&self)
+pub fn kernel_testkit::doubles::Recorder<T>::is_empty(&self) -> bool
+pub fn kernel_testkit::doubles::Recorder<T>::len(&self) -> usize
+pub fn kernel_testkit::doubles::Recorder<T>::new() -> Self
+pub fn kernel_testkit::doubles::Recorder<T>::record(&self, T)
+pub fn kernel_testkit::doubles::Recorder<T>::take(&self) -> alloc::vec::Vec<T>
+impl<T> core::clone::Clone for kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::clone(&self) -> Self
+impl<T> core::default::Default for kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::default() -> Self
+impl<T> core::fmt::Debug for kernel_testkit::doubles::Recorder<T>
+pub fn kernel_testkit::doubles::Recorder<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::marker::Freeze for kernel_testkit::doubles::Recorder<T>
+impl<T> core::marker::Send for kernel_testkit::doubles::Recorder<T> where T: core::marker::Send
+impl<T> core::marker::Sync for kernel_testkit::doubles::Recorder<T> where T: core::marker::Send
+impl<T> core::marker::Unpin for kernel_testkit::doubles::Recorder<T>
+impl<T> core::marker::UnsafeUnpin for kernel_testkit::doubles::Recorder<T>
+impl<T> core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::doubles::Recorder<T>
+impl<T> core::panic::unwind_safe::UnwindSafe for kernel_testkit::doubles::Recorder<T>
+pub struct kernel_testkit::Registered
+impl kernel_testkit::harness::Registered
+pub async fn kernel_testkit::harness::Registered::bindings<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(&self) -> usize
+pub fn kernel_testkit::harness::Registered::components(&self) -> usize
+pub fn kernel_testkit::harness::Registered::container(&self) -> &kernel::container::Container
+pub async fn kernel_testkit::harness::Registered::defaults_to<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(&self, &'static str) -> bool
+pub fn kernel_testkit::harness::Registered::dispatcher(&self) -> &alloc::sync::Arc<kernel::dispatcher::EventDispatcher>
+pub async fn kernel_testkit::harness::Registered::get<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(&self) -> core::result::Result<alloc::sync::Arc<C>, kernel_core::error::ContainerError>
+pub async fn kernel_testkit::harness::Registered::get_named<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(&self, &'static str) -> core::result::Result<alloc::sync::Arc<C>, kernel_core::error::ContainerError>
+pub fn kernel_testkit::harness::Registered::into_container(self) -> kernel::container::Container
+pub fn kernel_testkit::harness::Registered::listeners<E: kernel_core::event::Event>(&self) -> usize
+pub async fn kernel_testkit::harness::Registered::of(impl kernel::bundle::Bundle) -> core::result::Result<Self, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::Registered::records(&self) -> alloc::vec::Vec<kernel_core::telemetry::Record>
+pub fn kernel_testkit::harness::Registered::runnables(&self) -> usize
+pub fn kernel_testkit::harness::Registered::telemetry(&self) -> alloc::sync::Arc<kernel_core::telemetry::RecordingTelemetry>
+impl core::fmt::Debug for kernel_testkit::harness::Registered
+pub fn kernel_testkit::harness::Registered::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_testkit::harness::Registered
+impl core::marker::Send for kernel_testkit::harness::Registered
+impl core::marker::Sync for kernel_testkit::harness::Registered
+impl core::marker::Unpin for kernel_testkit::harness::Registered
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::Registered
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::Registered
+impl !core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::Registered
+pub struct kernel_testkit::TestBuilder
+impl kernel_testkit::harness::TestBuilder
+pub async fn kernel_testkit::harness::TestBuilder::build(self) -> core::result::Result<kernel::kernel::Kernel, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::TestBuilder::bundle(self, impl kernel::bundle::Bundle) -> Self
+pub fn kernel_testkit::harness::TestBuilder::config_source(self, impl kernel_core::config::ConfigSource) -> Self
+pub async fn kernel_testkit::harness::TestBuilder::container(self) -> core::result::Result<kernel::container::Container, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::TestBuilder::keep_running(self) -> Self
+pub fn kernel_testkit::harness::TestBuilder::new() -> Self
+pub async fn kernel_testkit::harness::TestBuilder::registered(self) -> core::result::Result<kernel_testkit::harness::Registered, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::TestBuilder::shutdown_policy(self, kernel_core::descriptor::ShutdownPolicy) -> Self
+pub async fn kernel_testkit::harness::TestBuilder::start(self) -> core::result::Result<kernel_testkit::harness::TestHarness, kernel_core::error::KernelError>
+pub fn kernel_testkit::harness::TestBuilder::substitute<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(self, alloc::sync::Arc<C>) -> Self
+pub fn kernel_testkit::harness::TestBuilder::substitute_component<T: kernel::component::Component>(self, alloc::sync::Arc<T>) -> Self
+pub fn kernel_testkit::harness::TestBuilder::substitute_named<C: ?core::marker::Sized + core::marker::Send + core::marker::Sync + 'static>(self, &'static str, alloc::sync::Arc<C>) -> Self
+pub fn kernel_testkit::harness::TestBuilder::substitute_runnable<T: kernel::runnable::Runnable>(self, alloc::sync::Arc<T>) -> Self
+pub fn kernel_testkit::harness::TestBuilder::telemetry(&self) -> alloc::sync::Arc<kernel_core::telemetry::RecordingTelemetry>
+impl core::default::Default for kernel_testkit::harness::TestBuilder
+pub fn kernel_testkit::harness::TestBuilder::default() -> Self
+impl core::marker::Freeze for kernel_testkit::harness::TestBuilder
+impl core::marker::Send for kernel_testkit::harness::TestBuilder
+impl !core::marker::Sync for kernel_testkit::harness::TestBuilder
+impl core::marker::Unpin for kernel_testkit::harness::TestBuilder
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::TestBuilder
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::TestBuilder
+impl !core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::TestBuilder
+pub struct kernel_testkit::TestHarness
+impl kernel_testkit::harness::TestHarness
+pub fn kernel_testkit::harness::TestHarness::container(&self) -> &kernel::container::Container
+pub fn kernel_testkit::harness::TestHarness::count(&self, &kernel_testkit::harness::RecordMatch) -> usize
+pub fn kernel_testkit::harness::TestHarness::handle(&self) -> kernel::shutdown::KernelHandle
+pub fn kernel_testkit::harness::TestHarness::is_running(&self) -> bool
+pub fn kernel_testkit::harness::TestHarness::records(&self) -> alloc::vec::Vec<kernel_core::telemetry::Record>
+pub async fn kernel_testkit::harness::TestHarness::stop(self) -> kernel_core::error::Outcome
+pub async fn kernel_testkit::harness::TestHarness::stopped(self) -> kernel_testkit::harness::Ended
+pub fn kernel_testkit::harness::TestHarness::telemetry(&self) -> alloc::sync::Arc<kernel_core::telemetry::RecordingTelemetry>
+pub async fn kernel_testkit::harness::TestHarness::wait(self) -> kernel_core::error::Outcome
+pub async fn kernel_testkit::harness::TestHarness::wait_for(&self, &kernel_testkit::harness::RecordMatch, usize) -> usize
+pub async fn kernel_testkit::harness::TestHarness::wait_for_record(&self, &str, usize) -> usize
+pub async fn kernel_testkit::harness::TestHarness::waited(self) -> kernel_testkit::harness::Ended
+impl core::fmt::Debug for kernel_testkit::harness::TestHarness
+pub fn kernel_testkit::harness::TestHarness::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kernel_testkit::harness::TestHarness
+impl core::marker::Send for kernel_testkit::harness::TestHarness
+impl core::marker::Sync for kernel_testkit::harness::TestHarness
+impl core::marker::Unpin for kernel_testkit::harness::TestHarness
+impl core::marker::UnsafeUnpin for kernel_testkit::harness::TestHarness
+impl !core::panic::unwind_safe::RefUnwindSafe for kernel_testkit::harness::TestHarness
+impl !core::panic::unwind_safe::UnwindSafe for kernel_testkit::harness::TestHarness
+pub async fn kernel_testkit::container<F>(F) -> core::result::Result<kernel::container::Container, kernel_core::error::KernelError> where F: core::ops::function::Fn(&mut kernel::registry::Registry) -> core::result::Result<(), kernel_core::error::RegisterError> + core::marker::Send + core::marker::Sync + 'static
+pub fn kernel_testkit::missing_contracts(impl kernel::bundle::Bundle) -> core::result::Result<alloc::vec::Vec<kernel_core::id::ContractRef>, kernel_core::error::KernelError>
+pub fn kernel_testkit::missing_contracts_with<S: kernel_core::config::ConfigSource>(impl kernel::bundle::Bundle, impl core::iter::traits::collect::IntoIterator<Item = S>) -> core::result::Result<alloc::vec::Vec<kernel_core::id::ContractRef>, kernel_core::error::KernelError>

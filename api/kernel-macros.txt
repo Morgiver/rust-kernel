@@ -1,0 +1,4 @@
+pub mod kernel_macros
+pub proc macro kernel_macros::#[derive(FromConfig)]
+pub proc macro kernel_macros::#[listener]
+pub proc macro kernel_macros::#[provider]
